@@ -695,4 +695,4 @@ print(f"  Abandonment rate   : {ab_mean*100:.1f}%  [{ab_lo*100:.1f}%, {ab_hi*100
 print(f"  Avg wait time      : {wt_mean:.2f} min  [{wt_lo:.2f}, {wt_hi:.2f}]")
 print(f"  Avg earnings/hr    : £{er_mean:.2f}  [£{er_lo:.2f}, £{er_hi:.2f}]")
 print(f"  Avg utilisation    : {ut_mean*100:.1f}%  [{ut_lo*100:.1f}%, {ut_hi*100:.1f}%]")
-print(f"  Earnings std/hr    : £{es_mean:.2f}  [£{es_lo:.2f}, £{es_hi:.2f}]")
+print(f"  Earnings std/hr    :git £{es_mean:.2f}  [£{es_lo:.2f}, £{es_hi:.2f}]")
