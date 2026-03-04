@@ -581,13 +581,8 @@ class Driver:
     id: int
     x: float
     y: float
-    pending_dropoff_x: float | None = None
-    pending_dropoff_y: float | None = None
-    pending_dropoff_time: float | None = None
-    pending_pickup: bool = False
     online: bool = False
     busy: bool = False
-    status: str = "idle"            # idle / deadhead / in_ride
     wants_offline: bool = False  # True = go offline after current ride completes
     offline_time: float | None = None  # scheduled offline time
     busy_since: float | None = None  # time of last match (for busy time accounting)
@@ -712,11 +707,15 @@ def run_simulation(
 
     def actual_time(mu):
         return float(rng.uniform(0.8 * mu, 1.2 * mu))
+    
+    def detour_multiplier():
+        # mean ~1.4, moderate variability; tune as needed
+        m = float(rng.normal(loc=1.4, scale=0.15))
+        return max(1.05, min(m, 2.0))
 
     driver_objects = {}
     rider_objects = {}
     idle_drivers = []
-    busy_drivers = []
     waiting_riders = []
     next_driver_id = 0
     next_rider_id = 0
@@ -745,60 +744,12 @@ def run_simulation(
             driver_online_time[driver_id] = (
                     driver_online_time.get(driver_id, 0.0) + current_time - start)
 
-    ### with our improvement
-    # if we allow riders to match with a driver that is not yet finished a drive but will be finished within a chosen amount of time, we can
-    # increase rider satisfaction as more riders will be matched before their patience runs out
-    def find_closest_driver(rx, ry, max_minutes_to_dropoff=10.0):
-        # Prefer idle drivers if any exist
-        
-        if idle_drivers:
-            best_id, best_dist = None, float("inf")
-            for did in idle_drivers:
-                d = driver_objects[did]
-                dist = euclid(d.x, d.y, rx, ry)
-                if dist < best_dist:
-                    best_dist, best_id = dist, did
-            return best_id
+    def find_closest_driver(rx, ry):
+        if not idle_drivers: return None
+        return min(idle_drivers,
+                   key=lambda did: euclid(driver_objects[did].x, driver_objects[did].y, rx, ry))
 
-        # Otherwise consider drivers currently in a ride who will finish soon,
-        # are not going offline, and don't already have a next ride assigned.
-        best_id, best_dist = None, float("inf")
-        max_hr = max_minutes_to_dropoff / 60.0
 
-        for did in busy_drivers:
-            d = driver_objects.get(did)
-            if d is None:
-                continue
-
-            if d.wants_offline:
-                continue
-
-            # If shift ends before (or at) current dropoff, don't assign a next ride
-            if d.offline_time is not None and d.pending_dropoff_time is not None and d.offline_time <= d.pending_dropoff_time:
-                continue
-
-            # Must be actively in a ride with a known dropoff time
-            if d.status != "in_ride" or d.pending_dropoff_time is None:
-                continue
-
-            # Already has next ride assigned? skip
-            if d.pending_pickup:
-                continue
-
-            # Must finish soon enough
-            time_to_dropoff = d.pending_dropoff_time - current_time
-            if time_to_dropoff < 0:
-                continue
-            if time_to_dropoff > max_hr:
-                continue
-
-            # Choose by closeness of *future dropoff location* to the new pickup
-            dist = euclid(d.pending_dropoff_x, d.pending_dropoff_y, rx, ry)
-            if dist < best_dist:
-                best_dist, best_id = dist, did
-
-        return best_id
-    
     def find_closest_rider(dx, dy):
         if not waiting_riders: return None
         return min(waiting_riders,
@@ -812,20 +763,12 @@ def run_simulation(
         r.status = "matched";
         r.driver_id = driver_id
         d.busy_since = t
-        if d.pending_dropoff_time != None:
-            dist_to_pickup = euclid(d.pending_dropoff_x, d.pending_dropoff_y, r.pickup_x, r.pickup_y)
-        else:
-            # store deadhead distance for later petrol accounting
-            d.status = "deadhead"
-            dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y)
+        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y) * detour_multiplier()
         r.pickup_dist = dist_to_pickup
 
         # remove from pools
         if driver_id in idle_drivers:
             idle_drivers.remove(driver_id)
-
-        if driver_id not in busy_drivers:
-            busy_drivers.append(driver_id)
         if rider_id in waiting_riders:
             waiting_riders.remove(rider_id)
         push(Event(time=t + actual_time(mean_time(dist_to_pickup)),
@@ -867,8 +810,6 @@ def run_simulation(
             d = driver_objects[did]
             if d.busy:
                 d.wants_offline = True  # finish current ride first
-                if did in busy_drivers:
-                    busy_drivers.remove(did)
             else:
                 if did in idle_drivers: idle_drivers.remove(did)
                 record_online_time(did, current_time)
@@ -903,59 +844,30 @@ def run_simulation(
                 if post_burnin: abandoned_count += 1
                 del rider_objects[rid]
 
-
         # ── PICKUP ────────────────────────────────────────────────────────────
         elif event.kind == "pickup":
-            rid = event.rider_id
+            rid = event.rider_id;
             did = event.driver_id
-
-            if did not in driver_objects:
-                continue
-            if rid not in rider_objects:
-                # rider vanished; safest is to free driver and continue
-                d = driver_objects[did]
-                d.busy = False
-                d.busy_since = None
-                d.status = "idle"
-                if did in busy_drivers:
-                    busy_drivers.remove(did)
-                if did not in idle_drivers:
-                    idle_drivers.append(did)
-                continue
-            
-            r = rider_objects[rid]
+            if rid not in rider_objects: continue
+            r = rider_objects[rid];
             d = driver_objects[did]
             r.status = "in_ride"
-            d.status = "in_ride"
-            d.pending_pickup = False
             d.x = r.pickup_x;
             d.y = r.pickup_y
             if post_burnin:
                 completed_waits.append(current_time - r.request_time)
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
-            mu_trip = mean_time(dist_trip)
-            trip_time = actual_time(mu_trip)
-            dropoff_t = current_time + trip_time
-            d.pending_dropoff_time = dropoff_t
-            d.pending_dropoff_x = r.dropoff_x
-            d.pending_dropoff_y = r.dropoff_y
-
+            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y) * detour_multiplier()
             push(Event(time=current_time + actual_time(mean_time(dist_trip)),
                        kind="dropoff", rider_id=rid, driver_id=did))
-            
+
         # ── DROPOFF ───────────────────────────────────────────────────────────
         elif event.kind == "dropoff":
-            rid = event.rider_id
+            rid = event.rider_id;
             did = event.driver_id
-        
-            if did not in driver_objects:
-                continue
-            if rid not in rider_objects:
-                continue
-            
-            r = rider_objects[rid]
+            if rid not in rider_objects: continue
+            r = rider_objects[rid];
             d = driver_objects[did]
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
+            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y) * detour_multiplier()
             total_miles = r.pickup_dist + dist_trip
             fare = fare_base + fare_per_mile * dist_trip
             cost = cost_per_mile * total_miles
@@ -963,44 +875,21 @@ def run_simulation(
             d.y = r.dropoff_y
             if post_burnin:
                 driver_earnings[did] = driver_earnings.get(did, 0.0) + fare - cost
-                if d.busy_since is not None:
-                    driver_busy_time[did] = driver_busy_time.get(did, 0.0) + (current_time - d.busy_since)
-                else:
-                    driver_busy_time[did] = driver_busy_time.get(did, 0.0)
+                driver_busy_time[did] = driver_busy_time.get(did, 0.0) + (
+                        current_time - d.busy_since)
                 completed_count += 1
             r.status = "completed"
             del rider_objects[rid]
-            d.busy_since = None
-
-            if d.pending_pickup:
-                # still busy overall (deadheading to next pickup)
-                d.busy = True
-                d.status = "deadhead"
-            else:
-                # truly idle
-                d.busy = False
-                d.status = "idle"
-
-            d.pending_dropoff_x = None
-            d.pending_dropoff_y = None
-            d.pending_dropoff_time = None
-
+            d.busy = False
             if d.wants_offline:
                 record_online_time(did, current_time)
-                if did in busy_drivers:
-                    busy_drivers.remove(did)
                 del driver_objects[did]
                 continue
             closest_rider = find_closest_rider(d.x, d.y)
             if closest_rider is not None:
                 match(did, closest_rider, current_time)
             else:
-                # driver is truly idle now: remove from busy pool, then add to idle pool
-                if did in busy_drivers and not d.pending_pickup:
-                    busy_drivers.remove(did)
-            
-                if (did not in idle_drivers) and (d.pending_pickup == False):
-                    idle_drivers.append(did)       
+                idle_drivers.append(did)
 
     # Cleanup: record online time for drivers still active at T_end
     for did, d in list(driver_objects.items()):
@@ -1102,7 +991,7 @@ ut_mean, ut_lo, ut_hi = confidence_interval(rep_utilisation)
 es_mean, es_lo, es_hi = confidence_interval(rep_earnings_std)
 
 print("\n" + "=" * 65)
-print(f"REPLICATION RESULTS BUSY MODEL ({N_REPS} runs, mean ± 95% CI)")
+print(f"REPLICATION RESULTS DETOUR MODEL ({N_REPS} runs, mean ± 95% CI)")
 print("=" * 65)
 print(f"  Abandonment rate  : {ab_mean * 100:.1f}%  [{ab_lo * 100:.1f}%, {ab_hi * 100:.1f}%]")
 print(f"  Avg wait time     : {wt_mean:.2f} min  [{wt_lo:.2f}, {wt_hi:.2f}]")
