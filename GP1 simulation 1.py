@@ -325,7 +325,7 @@ def run_simulation(
     ### with our improvement
     # if we allow riders to match with a driver that is not yet finished a drive but will be finished within a chosen amount of time, we can
     # increase rider satisfaction as more riders will be matched before their patience runs out
-    def find_closest_driver_improved(rx, ry, max_minutes_to_dropoff=5.0):
+    def find_closest_driver_improved(rx, ry, max_minutes_to_dropoff=10.0):
         # Prefer idle drivers if any exist
         if idle_drivers:
             best_id, best_dist = None, float("inf")
@@ -644,6 +644,7 @@ def run_simulation(
                 else:
                     if (driver_id not in idle_drivers) and (d.pending_pickup == False):
                         idle_drivers.append(driver_id)
+
                         
 
     # cleanup online time for drivers still online at T_end
