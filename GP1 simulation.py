@@ -9,11 +9,9 @@ from scipy.stats import (chisquare, kstest, expon, uniform,
                          t as t_dist, pearsonr)
 from scipy import stats
 import matplotlib
-
-matplotlib.use("Agg")  # change to "TkAgg" if you want interactive windows
+matplotlib.use("TkAgg")        # shows plots on screen; change to "Agg" to save only
 import matplotlib.pyplot as plt
 import warnings
-
 warnings.filterwarnings("ignore")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -21,38 +19,35 @@ warnings.filterwarnings("ignore")
 # ══════════════════════════════════════════════════════════════════════════════
 
 ALPHA = 0.05
-SEED = 42
+SEED  = 42
 
 # Update these paths to wherever your data files live
-RIDERS_PATH = r"riders.xlsx"
+RIDERS_PATH  = r"riders.xlsx"
 DRIVERS_PATH = r"drivers.xlsx"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # LOAD AND PARSE DATA
 # ══════════════════════════════════════════════════════════════════════════════
 
-riders = pd.read_excel(RIDERS_PATH)
+riders  = pd.read_excel(RIDERS_PATH)
 drivers = pd.read_excel(DRIVERS_PATH)
-
 
 def convert_to_xy(v):
     if isinstance(v, tuple):
         return v
     return ast.literal_eval(v)
 
-
 drivers["initial_location"] = drivers["initial_location"].apply(convert_to_xy)
 drivers["current_location"] = drivers["current_location"].apply(convert_to_xy)
-drivers[["x", "y"]] = pd.DataFrame(drivers["current_location"].tolist(), index=drivers.index)
+drivers[["x", "y"]]                = pd.DataFrame(drivers["current_location"].tolist(),  index=drivers.index)
 drivers[["initial_x", "initial_y"]] = pd.DataFrame(drivers["initial_location"].tolist(), index=drivers.index)
 
-riders["pickup_location"] = riders["pickup_location"].apply(convert_to_xy)
+riders["pickup_location"]  = riders["pickup_location"].apply(convert_to_xy)
 riders["dropoff_location"] = riders["dropoff_location"].apply(convert_to_xy)
-riders[["pickup_x", "pickup_y"]] = pd.DataFrame(riders["pickup_location"].tolist(), index=riders.index)
+riders[["pickup_x",  "pickup_y"]]  = pd.DataFrame(riders["pickup_location"].tolist(),  index=riders.index)
 riders[["dropoff_x", "dropoff_y"]] = pd.DataFrame(riders["dropoff_location"].tolist(), index=riders.index)
 
 print(f"Loaded {len(riders):,} rider records and {len(drivers):,} driver records.")
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — TRAIN / TEST SPLIT UTILITY
@@ -65,29 +60,28 @@ def split(arr, frac=0.70, seed=SEED):
     cut = int(len(arr) * frac)
     return arr[idx[:cut]], arr[idx[cut:]]
 
-
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 2 — ARRIVAL AND DURATION DISTRIBUTION TESTING
 # ══════════════════════════════════════════════════════════════════════════════
 
-rider_iat = riders["request_time"].sort_values().diff().dropna().values
+rider_iat  = riders["request_time"].sort_values().diff().dropna().values
 driver_iat = drivers["arrival_time"].sort_values().diff().dropna().values
 driver_dur = (drivers["offline_time"] - drivers["arrival_time"]).values
 
-rider_iat_train, rider_iat_test = split(rider_iat)
+rider_iat_train,  rider_iat_test  = split(rider_iat)
 driver_iat_train, driver_iat_test = split(driver_iat)
 driver_dur_train, driver_dur_test = split(driver_dur)
 
-rider_rate_mle = 1.0 / rider_iat_train.mean()
+rider_rate_mle  = 1.0 / rider_iat_train.mean()
 driver_rate_mle = 1.0 / driver_iat_train.mean()
-dur_a_mle = driver_dur_train.min()
-dur_b_mle = driver_dur_train.max()
+dur_a_mle       = driver_dur_train.min()
+dur_b_mle       = driver_dur_train.max()
 
 print("\n" + "=" * 70)
 print("MLE PARAMETER ESTIMATES  (70% training data)")
 print("=" * 70)
-print(f"  Rider IAT   MLE rate : {rider_rate_mle:.2f}/hr  (brief: 30.00/hr)  mean = {60 / rider_rate_mle:.2f} min")
-print(f"  Driver IAT  MLE rate : {driver_rate_mle:.2f}/hr  (brief: 3.00/hr)   mean = {60 / driver_rate_mle:.2f} min")
+print(f"  Rider IAT   MLE rate : {rider_rate_mle:.2f}/hr  (brief: 30.00/hr)  mean = {60/rider_rate_mle:.2f} min")
+print(f"  Driver IAT  MLE rate : {driver_rate_mle:.2f}/hr  (brief: 3.00/hr)   mean = {60/driver_rate_mle:.2f} min")
 print(f"  Driver dur  MLE range: [{dur_a_mle:.2f}, {dur_b_mle:.2f}] hrs  (brief: [5, 8])")
 
 
@@ -95,31 +89,29 @@ def run_chi2(data, dist, params, n_bins=20):
     """Chi-squared GOF test. Merges bins with expected < 5. Adjusts df for params."""
     n = len(data)
     if dist == "exponential":
-        rate = params["rate"]
+        rate   = params["rate"]
         lo, hi = 0, np.percentile(data, 99)
-        edges = np.linspace(lo, hi, n_bins + 1)
-        cdf = expon.cdf(edges, scale=1 / rate)
+        edges  = np.linspace(lo, hi, n_bins + 1)
+        cdf    = expon.cdf(edges, scale=1 / rate)
     elif dist == "uniform":
-        a, b = params["a"], params["b"]
+        a, b  = params["a"], params["b"]
         edges = np.linspace(a, b, n_bins + 1)
-        cdf = uniform.cdf(edges, loc=a, scale=b - a)
+        cdf   = uniform.cdf(edges, loc=a, scale=b - a)
     observed = np.histogram(data, bins=edges)[0].astype(float)
     expected = np.diff(cdf) * n
-    expected = expected * (observed.sum() / expected.sum())  # normalise to avoid float errors
+    expected = expected * (observed.sum() / expected.sum())   # normalise to avoid float errors
     obs_m, exp_m = list(observed), list(expected)
     i = 0
     while i < len(exp_m):
         if exp_m[i] < 5:
             j = i + 1 if i < len(exp_m) - 1 else i - 1
-            obs_m[j] += obs_m.pop(i);
-            exp_m[j] += exp_m.pop(i);
-            i = max(0, i - 1)
+            obs_m[j] += obs_m.pop(i); exp_m[j] += exp_m.pop(i); i = max(0, i - 1)
         else:
             i += 1
     stat, _ = chisquare(f_obs=obs_m, f_exp=exp_m)
     n_params = 1 if dist == "exponential" else 2
     df = max(len(obs_m) - 1 - n_params, 1)
-    p = 1 - chi2_dist.cdf(stat, df)
+    p  = 1 - chi2_dist.cdf(stat, df)
     return round(stat, 3), round(p, 4)
 
 
@@ -133,7 +125,7 @@ def run_all_tests(label, data_test, dist, brief_params, mle_params):
         ks_m = kstest(data_test, "expon", args=(0, 1 / mle_params["rate"]))
     else:
         ks_b = kstest(data_test, "uniform", args=(brief_params["a"], brief_params["b"] - brief_params["a"]))
-        ks_m = kstest(data_test, "uniform", args=(mle_params["a"], mle_params["b"] - mle_params["a"]))
+        ks_m = kstest(data_test, "uniform", args=(mle_params["a"],   mle_params["b"]   - mle_params["a"]))
     print(f"\n{'─' * 65}")
     print(f"  {label}   (n_test = {len(data_test):,})")
     print(f"{'─' * 65}")
@@ -149,13 +141,12 @@ print("\n" + "=" * 65)
 print("GOODNESS-OF-FIT TESTS — ARRIVAL AND DURATION  (alpha = 0.05)")
 print("=" * 65)
 
-run_all_tests("Rider Inter-Arrival Time", rider_iat_test, "exponential",
+run_all_tests("Rider Inter-Arrival Time",  rider_iat_test,  "exponential",
               {"rate": 30.0}, {"rate": rider_rate_mle})
 run_all_tests("Driver Inter-Arrival Time", driver_iat_test, "exponential",
-              {"rate": 3.0}, {"rate": driver_rate_mle})
-run_all_tests("Driver Online Duration", driver_dur_test, "uniform",
+              {"rate": 3.0},  {"rate": driver_rate_mle})
+run_all_tests("Driver Online Duration",    driver_dur_test, "uniform",
               {"a": 5.0, "b": 8.0}, {"a": dur_a_mle, "b": dur_b_mle})
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — SPATIAL MODEL SELECTION
@@ -179,25 +170,23 @@ def make_grid(resolution=60):
 
 def chi2_1d(data, cdf_fn, n_bins=20, n_params=2):
     """Chi-squared GOF for a 1D distribution over [0,20]."""
-    n = len(data)
+    n     = len(data)
     edges = np.linspace(0, 20, n_bins + 1)
-    cdf = np.clip(cdf_fn(edges), 0, 1)
-    exp = np.diff(cdf) * n
-    obs = np.histogram(data, bins=edges)[0].astype(float)
-    exp = exp * (obs.sum() / exp.sum())
+    cdf   = np.clip(cdf_fn(edges), 0, 1)
+    exp   = np.diff(cdf) * n
+    obs   = np.histogram(data, bins=edges)[0].astype(float)
+    exp   = exp * (obs.sum() / exp.sum())
     obs_m, exp_m = list(obs), list(exp)
     i = 0
     while i < len(exp_m):
         if exp_m[i] < 5:
             j = i + 1 if i < len(exp_m) - 1 else i - 1
-            obs_m[j] += obs_m.pop(i);
-            exp_m[j] += exp_m.pop(i);
-            i = max(0, i - 1)
+            obs_m[j] += obs_m.pop(i); exp_m[j] += exp_m.pop(i); i = max(0, i - 1)
         else:
             i += 1
     stat, _ = chisquare(f_obs=obs_m, f_exp=exp_m)
     df = max(len(obs_m) - 1 - n_params, 1)
-    p = 1 - chi2_dist.cdf(stat, df)
+    p  = 1 - chi2_dist.cdf(stat, df)
     return round(stat, 3), round(p, 4), df
 
 
@@ -213,12 +202,12 @@ def kl_divergence_kde_vs_uniform(xs, ys, resolution=60):
     KL = integral f(x) log(f(x)/g(x)) dx  where g = 1/400 (uniform density).
     """
     X, Y, grid = make_grid(resolution)
-    kde = gaussian_kde(np.vstack([xs, ys]))
-    f = kde(grid).reshape(resolution, resolution)
-    g = 1.0 / 400.0  # uniform density on 20x20 area
+    kde  = gaussian_kde(np.vstack([xs, ys]))
+    f    = kde(grid).reshape(resolution, resolution)
+    g    = 1.0 / 400.0   # uniform density on 20x20 area
     cell = (20.0 / resolution) ** 2
     mask = f > 0
-    kl = np.sum(f[mask] * np.log(f[mask] / g) * cell)
+    kl   = np.sum(f[mask] * np.log(f[mask] / g) * cell)
     return round(float(kl), 3)
 
 
@@ -227,11 +216,11 @@ def kl_divergence_two_kdes(xs1, ys1, xs2, ys2, resolution=60):
     X, Y, grid = make_grid(resolution)
     kde1 = gaussian_kde(np.vstack([xs1, ys1]))
     kde2 = gaussian_kde(np.vstack([xs2, ys2]))
-    f1 = kde1(grid).reshape(resolution, resolution)
-    f2 = kde2(grid).reshape(resolution, resolution)
+    f1   = kde1(grid).reshape(resolution, resolution)
+    f2   = kde2(grid).reshape(resolution, resolution)
     cell = (20.0 / resolution) ** 2
     mask = (f1 > 0) & (f2 > 0)
-    kl = np.sum(f1[mask] * np.log(f1[mask] / f2[mask]) * cell)
+    kl   = np.sum(f1[mask] * np.log(f1[mask] / f2[mask]) * cell)
     return round(float(kl), 3)
 
 
@@ -258,8 +247,8 @@ def spatial_model_selection(riders_df, drivers_df):
     X, Y, grid_coords = make_grid(resolution=60)
 
     loc_datasets = [
-        ("Rider Pickup", riders_df["pickup_x"].values, riders_df["pickup_y"].values),
-        ("Rider Dropoff", riders_df["dropoff_x"].values, riders_df["dropoff_y"].values),
+        ("Rider Pickup",   riders_df["pickup_x"].values,   riders_df["pickup_y"].values),
+        ("Rider Dropoff",  riders_df["dropoff_x"].values,  riders_df["dropoff_y"].values),
         ("Driver Initial", drivers_df["initial_x"].values, drivers_df["initial_y"].values),
     ]
 
@@ -272,8 +261,8 @@ def spatial_model_selection(riders_df, drivers_df):
         _, ys_t = split(ys)
         ksx = kstest(xs_t, "uniform", args=(0, 20))
         ksy = kstest(ys_t, "uniform", args=(0, 20))
-        print(f"  {label}: X KS p={round(ksx.pvalue, 4)} → {dec(ksx.pvalue)} | "
-              f"Y KS p={round(ksy.pvalue, 4)} → {dec(ksy.pvalue)}")
+        print(f"  {label}: X KS p={round(ksx.pvalue,4)} → {dec(ksx.pvalue)} | "
+              f"Y KS p={round(ksy.pvalue,4)} → {dec(ksy.pvalue)}")
     print("  → Uniform(0,20) REJECTED for all location types.")
 
     # ── Step 2: Truncated Normal ──────────────────────────────────────────────
@@ -291,8 +280,8 @@ def spatial_model_selection(riders_df, drivers_df):
 
         cx, pcx, dfx = chi2_1d(xs, tn_x.cdf, n_params=2)
         cy, pcy, dfy = chi2_1d(ys, tn_y.cdf, n_params=2)
-        Dx, pks_x = ks_1d(xs, tn_x.cdf)
-        Dy, pks_y = ks_1d(ys, tn_y.cdf)
+        Dx, pks_x    = ks_1d(xs, tn_x.cdf)
+        Dy, pks_y    = ks_1d(ys, tn_y.cdf)
 
         print(f"\n  {label}:")
         print(f"    TN X: chi2={cx} (df={dfx}) p={pcx} → {dec(pcx)} | "
@@ -312,19 +301,17 @@ def spatial_model_selection(riders_df, drivers_df):
     for label, xs_all, ys_all in loc_datasets:
         _, xs = split(xs_all)
         _, ys = split(ys_all)
-        mu_x = xs_all.mean();
-        sig_x = xs_all.std()
-        mu_y = ys_all.mean();
-        sig_y = ys_all.std()
-        cov = np.cov(xs_all, ys_all)
-        rho = cov[0, 1] / (np.sqrt(cov[0, 0]) * np.sqrt(cov[1, 1]))
-        bvn_x_cdf = lambda v, m=mu_x, s=np.sqrt(cov[0, 0]): norm.cdf(v, loc=m, scale=s)
-        bvn_y_cdf = lambda v, m=mu_y, s=np.sqrt(cov[1, 1]): norm.cdf(v, loc=m, scale=s)
+        mu_x  = xs_all.mean(); sig_x = xs_all.std()
+        mu_y  = ys_all.mean(); sig_y = ys_all.std()
+        cov   = np.cov(xs_all, ys_all)
+        rho   = cov[0, 1] / (np.sqrt(cov[0, 0]) * np.sqrt(cov[1, 1]))
+        bvn_x_cdf = lambda v, m=mu_x, s=np.sqrt(cov[0,0]): norm.cdf(v, loc=m, scale=s)
+        bvn_y_cdf = lambda v, m=mu_y, s=np.sqrt(cov[1,1]): norm.cdf(v, loc=m, scale=s)
 
         cx, pcx, dfx = chi2_1d(xs, bvn_x_cdf, n_params=2)
         cy, pcy, dfy = chi2_1d(ys, bvn_y_cdf, n_params=2)
-        Dx, pks_x = ks_1d(xs, bvn_x_cdf)
-        Dy, pks_y = ks_1d(ys, bvn_y_cdf)
+        Dx, pks_x    = ks_1d(xs, bvn_x_cdf)
+        Dy, pks_y    = ks_1d(ys, bvn_y_cdf)
 
         print(f"  {label}  (rho={rho:.4f}):")
         print(f"    BVN X marginal: chi2={cx} p={pcx} → {dec(pcx)} | KS D={Dx} p={pks_x} → {dec(pks_x)}")
@@ -337,16 +324,13 @@ def spatial_model_selection(riders_df, drivers_df):
     # ── Step 4: Spatial mismatch and KL divergence ────────────────────────────
     print("\n── STEP 4: Spatial Mismatch Quantification ──────────────────────────")
 
-    px = riders_df["pickup_x"].values;
-    py = riders_df["pickup_y"].values
-    dx = riders_df["dropoff_x"].values;
-    dy = riders_df["dropoff_y"].values
-    ix = drivers_df["initial_x"].values;
-    iy = drivers_df["initial_y"].values
+    px = riders_df["pickup_x"].values;  py = riders_df["pickup_y"].values
+    dx = riders_df["dropoff_x"].values; dy = riders_df["dropoff_y"].values
+    ix = drivers_df["initial_x"].values; iy = drivers_df["initial_y"].values
 
-    mu_pu = np.array([px.mean(), py.mean()])
-    mu_do = np.array([dx.mean(), dy.mean()])
-    mu_dr = np.array([ix.mean(), iy.mean()])
+    mu_pu  = np.array([px.mean(), py.mean()])
+    mu_do  = np.array([dx.mean(), dy.mean()])
+    mu_dr  = np.array([ix.mean(), iy.mean()])
     mu_uni = np.array([10.0, 10.0])
 
     corr_pu, p_pu = pearsonr(px, py)
@@ -356,21 +340,18 @@ def spatial_model_selection(riders_df, drivers_df):
     kl_pu_uni = kl_divergence_kde_vs_uniform(px, py)
     kl_do_uni = kl_divergence_kde_vs_uniform(dx, dy)
     kl_dr_uni = kl_divergence_kde_vs_uniform(ix, iy)
-    kl_pu_dr = kl_divergence_two_kdes(px, py, ix, iy)
-    kl_do_dr = kl_divergence_two_kdes(dx, dy, ix, iy)
+    kl_pu_dr  = kl_divergence_two_kdes(px, py, ix, iy)
+    kl_do_dr  = kl_divergence_two_kdes(dx, dy, ix, iy)
 
-    dist_pu_dr = float(np.linalg.norm(mu_pu - mu_dr))
-    dist_do_dr = float(np.linalg.norm(mu_do - mu_dr))
+    dist_pu_dr  = float(np.linalg.norm(mu_pu - mu_dr))
+    dist_do_dr  = float(np.linalg.norm(mu_do - mu_dr))
     dist_pu_uni = float(np.linalg.norm(mu_pu - mu_uni))
-    dist_pu_do = float(np.linalg.norm(mu_pu - mu_do))
+    dist_pu_do  = float(np.linalg.norm(mu_pu - mu_do))
 
     print(f"\n  Centroid locations:")
-    print(
-        f"    Rider pickup  : ({mu_pu[0]:.2f}, {mu_pu[1]:.2f})  σ=({px.std():.2f}, {py.std():.2f})  ρ={corr_pu:.4f} (p={p_pu:.2e})")
-    print(
-        f"    Rider dropoff : ({mu_do[0]:.2f}, {mu_do[1]:.2f})  σ=({dx.std():.2f}, {dy.std():.2f})  ρ={corr_do:.4f} (p={p_do:.2e})")
-    print(
-        f"    Driver initial: ({mu_dr[0]:.2f}, {mu_dr[1]:.2f})  σ=({ix.std():.2f}, {iy.std():.2f})  ρ={corr_dr:.4f} (p={p_dr:.2e})")
+    print(f"    Rider pickup  : ({mu_pu[0]:.2f}, {mu_pu[1]:.2f})  σ=({px.std():.2f}, {py.std():.2f})  ρ={corr_pu:.4f} (p={p_pu:.2e})")
+    print(f"    Rider dropoff : ({mu_do[0]:.2f}, {mu_do[1]:.2f})  σ=({dx.std():.2f}, {dy.std():.2f})  ρ={corr_do:.4f} (p={p_do:.2e})")
+    print(f"    Driver initial: ({mu_dr[0]:.2f}, {mu_dr[1]:.2f})  σ=({ix.std():.2f}, {iy.std():.2f})  ρ={corr_dr:.4f} (p={p_dr:.2e})")
     print(f"    Uniform(0,20) : (10.00, 10.00)  σ=(5.77, 5.77)  ρ=0.000")
 
     print(f"\n  Centroid distances:")
@@ -385,7 +366,7 @@ def spatial_model_selection(riders_df, drivers_df):
     print(f"    KL(driver  || uniform) = {kl_dr_uni}")
     print(f"    KL(pickup  || driver)  = {kl_pu_dr}   ← riders/drivers more similar to each other")
     print(f"    KL(dropoff || driver)  = {kl_do_dr}")
-    print(f"\n  → KL(pickup||uniform) = {kl_pu_uni} is {kl_pu_uni / kl_pu_dr:.1f}x larger than")
+    print(f"\n  → KL(pickup||uniform) = {kl_pu_uni} is {kl_pu_uni/kl_pu_dr:.1f}x larger than")
     print(f"    KL(pickup||driver) = {kl_pu_dr}. Uniform assumption underestimates")
     print(f"    spatial alignment and therefore overestimates deadhead distances.")
     print(f"\n  → Adopted model: 4D KDE (only model not rejected by formal testing)")
@@ -405,8 +386,7 @@ def spatial_model_selection(riders_df, drivers_df):
         ax.scatter(xs, ys, s=1, alpha=0.12, color="white")
         plt.colorbar(im, ax=ax, label="Density")
         ax.set_title(label, fontweight="bold")
-        ax.set_xlabel("X (miles)");
-        ax.set_ylabel("Y (miles)")
+        ax.set_xlabel("X (miles)"); ax.set_ylabel("Y (miles)")
     plt.tight_layout()
     plt.savefig("spatial_kde_heatmaps.png", dpi=150, bbox_inches="tight")
     plt.close()
@@ -420,7 +400,7 @@ def spatial_model_selection(riders_df, drivers_df):
         fontsize=11, fontweight="bold"
     )
     for ax, xs, ys, title in [
-        (axes[0], riders_df["pickup_x"].values, riders_df["pickup_y"].values, "Pickup Locations"),
+        (axes[0], riders_df["pickup_x"].values,  riders_df["pickup_y"].values,  "Pickup Locations"),
         (axes[1], riders_df["dropoff_x"].values, riders_df["dropoff_y"].values, "Dropoff Locations"),
     ]:
         kde_2d = gaussian_kde(np.vstack([xs, ys]))
@@ -429,12 +409,10 @@ def spatial_model_selection(riders_df, drivers_df):
         ax.scatter(xs, ys, s=1, alpha=0.08, color="navy")
         ax.axhline(ys.mean(), color="red", lw=1.5, linestyle="--",
                    label=f"Mean y = {ys.mean():.2f}")
-        ax.set_xlim(0, 20);
-        ax.set_ylim(0, 20)
+        ax.set_xlim(0, 20); ax.set_ylim(0, 20)
         ax.set_title(f"{title}\nMean y = {ys.mean():.2f}  (Uniform expectation: 10.00)",
                      fontweight="bold")
-        ax.set_xlabel("X (miles)");
-        ax.set_ylabel("Y (miles)")
+        ax.set_xlabel("X (miles)"); ax.set_ylabel("Y (miles)")
         ax.legend(fontsize=9)
     plt.tight_layout()
     plt.savefig("spatial_pickup_vs_dropoff.png", dpi=150, bbox_inches="tight")
@@ -458,18 +436,18 @@ def spatial_model_selection(riders_df, drivers_df):
     for row, (label, xs_all, ys_all) in enumerate(loc_datasets):
         mu_x, sig_x = xs_all.mean(), xs_all.std()
         mu_y, sig_y = ys_all.mean(), ys_all.std()
-        a_x, b_x = (0 - mu_x) / sig_x, (20 - mu_x) / sig_x
-        a_y, b_y = (0 - mu_y) / sig_y, (20 - mu_y) / sig_y
-        corr_r, _ = pearsonr(xs_all, ys_all)
+        a_x, b_x    = (0 - mu_x) / sig_x, (20 - mu_x) / sig_x
+        a_y, b_y    = (0 - mu_y) / sig_y, (20 - mu_y) / sig_y
+        corr_r, _   = pearsonr(xs_all, ys_all)
 
-        tn_x = truncnorm(a_x, b_x, loc=mu_x, scale=sig_x)
-        tn_y = truncnorm(a_y, b_y, loc=mu_y, scale=sig_y)
-        bvn = multivariate_normal([mu_x, mu_y], np.cov(xs_all, ys_all))
+        tn_x  = truncnorm(a_x, b_x, loc=mu_x, scale=sig_x)
+        tn_y  = truncnorm(a_y, b_y, loc=mu_y, scale=sig_y)
+        bvn   = multivariate_normal([mu_x, mu_y], np.cov(xs_all, ys_all))
         kde2d = gaussian_kde(np.vstack([xs_all, ys_all]))
 
         Z_kde = kde2d(grid_coords).reshape(60, 60)
         Z_bvn = bvn.pdf(np.dstack((X, Y)))
-        Z_tn = tn_x.pdf(X) * tn_y.pdf(Y)
+        Z_tn  = tn_x.pdf(X) * tn_y.pdf(Y)
 
         notes = [
             "No assumption\nFits true shape",
@@ -482,8 +460,7 @@ def spatial_model_selection(riders_df, drivers_df):
             ax.contourf(X, Y, Z, levels=12, cmap="YlOrRd", alpha=0.85)
             ax.contour(X, Y, Z, levels=12, colors="k", linewidths=0.4, alpha=0.35)
             ax.scatter(xs_all, ys_all, **scatter_kw)
-            ax.set_xlim(0, 20);
-            ax.set_ylim(0, 20)
+            ax.set_xlim(0, 20); ax.set_ylim(0, 20)
             ax.text(0.03, 0.03, note, transform=ax.transAxes, fontsize=7.5,
                     bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.75))
             ax.set_xlabel("X (miles)", fontsize=8)
@@ -510,17 +487,16 @@ def spatial_model_selection(riders_df, drivers_df):
 
     for row, (label, xs_all, ys_all) in enumerate(loc_datasets):
         for col, (data, coord) in enumerate([(xs_all, "X"), (ys_all, "Y")]):
-            ax = axes[row][col]
-            mu = data.mean();
-            sig = data.std()
+            ax   = axes[row][col]
+            mu   = data.mean(); sig = data.std()
             a, b = (0 - mu) / sig, (20 - mu) / sig
-            tn = truncnorm(a, b, loc=mu, scale=sig)
+            tn   = truncnorm(a, b, loc=mu, scale=sig)
             kde1 = gaussian_kde(data)
             ax.hist(data, bins=50, density=True, alpha=0.35,
                     color="steelblue", label="Observed")
-            ax.plot(xplot, tn.pdf(xplot), color="crimson", lw=2,
+            ax.plot(xplot, tn.pdf(xplot),  color="crimson",  lw=2,
                     label=f"TruncNorm (μ={mu:.1f}, σ={sig:.1f})")
-            ax.plot(xplot, kde1(xplot), color="darkgreen", lw=2,
+            ax.plot(xplot, kde1(xplot),    color="darkgreen", lw=2,
                     label="KDE (1D)")
             ax.set_xlabel(f"{coord} (miles)", fontsize=9)
             ax.set_ylabel("Density", fontsize=9)
@@ -536,9 +512,9 @@ def spatial_model_selection(riders_df, drivers_df):
     pickup_x = riders_df["pickup_x"].values
     pickup_y = riders_df["pickup_y"].values
     mean_vec = np.array([pickup_x.mean(), pickup_y.mean()])
-    cov_mat = np.cov(pickup_x, pickup_y)
+    cov_mat  = np.cov(pickup_x, pickup_y)
     corr_pu2 = np.corrcoef(pickup_x, pickup_y)[0, 1]
-    kde_pu = gaussian_kde(np.vstack([pickup_x, pickup_y]))
+    kde_pu   = gaussian_kde(np.vstack([pickup_x, pickup_y]))
     Z_kde_pu = kde_pu(grid_coords).reshape(60, 60)
     Z_bvn_pu = multivariate_normal(mean_vec, cov_mat).pdf(np.dstack((X, Y)))
 
@@ -555,11 +531,9 @@ def spatial_model_selection(riders_df, drivers_df):
         ax.contourf(X, Y, Z, levels=12, cmap="YlOrRd", alpha=0.8)
         ax.contour(X, Y, Z, levels=12, colors="k", linewidths=0.5, alpha=0.5)
         ax.scatter(pickup_x, pickup_y, s=1, alpha=0.08, color="steelblue")
-        ax.set_xlim(0, 20);
-        ax.set_ylim(0, 20)
+        ax.set_xlim(0, 20); ax.set_ylim(0, 20)
         ax.set_title(title, fontsize=9)
-        ax.set_xlabel("X (miles)");
-        ax.set_ylabel("Y (miles)")
+        ax.set_xlabel("X (miles)"); ax.set_ylabel("Y (miles)")
     plt.tight_layout()
     plt.savefig("spatial_kde_vs_bvn.png", dpi=150, bbox_inches="tight")
     plt.close()
@@ -573,6 +547,142 @@ def spatial_model_selection(riders_df, drivers_df):
 # Run spatial model selection
 spatial_model_selection(riders, drivers)
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 3b — BVN DIAGNOSTIC FIGURES
+#
+# Generates three figures used in the report:
+#   1. bvn_fitted_contours.png      — fitted BVN density over observed data
+#   2. bvn_acceptance_rejection.png — accepted vs rejected samples
+#   3. bvn_marginals.png            — observed vs BVN marginal vs KDE reference
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_bvn_figures(riders_df, save_dir="."):
+    """
+    Generates and saves all three BVN diagnostic figures.
+    Requires bvn_params to already be fitted (called after fit_truncated_bvn).
+    """
+    import os
+    px  = riders_df["pickup_x"].values;  py  = riders_df["pickup_y"].values
+    dx  = riders_df["dropoff_x"].values; dy  = riders_df["dropoff_y"].values
+    mu_pu  = np.array([px.mean(), py.mean()])
+    cov_pu = np.cov(px, py)
+    mu_do  = np.array([dx.mean(), dy.mean()])
+    cov_do = np.cov(dx, dy)
+    rho_pu = cov_pu[0,1] / np.sqrt(cov_pu[0,0] * cov_pu[1,1])
+    rho_do = cov_do[0,1] / np.sqrt(cov_do[0,0] * cov_do[1,1])
+
+    xg = np.linspace(0, 20, 60);  yg = np.linspace(0, 20, 60)
+    X, Y = np.meshgrid(xg, yg);   pos = np.dstack((X, Y))
+
+    # ── Figure 1: Fitted BVN contours ────────────────────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(
+        "Fitted Truncated Bivariate Normal — Pickup and Dropoff Locations\n"
+        r"Contours show BVN density; boundary $[0,20]^2$ enforced by acceptance-rejection",
+        fontsize=11, fontweight="bold"
+    )
+    for ax, mu, cov, rho, xs, ys, label, cmap in [
+        (axes[0], mu_pu, cov_pu, rho_pu, px, py, "Rider Pickup",  "YlOrRd"),
+        (axes[1], mu_do, cov_do, rho_do, dx, dy, "Rider Dropoff", "Blues"),
+    ]:
+        bvn = multivariate_normal(mean=mu, cov=cov)
+        Z   = bvn.pdf(pos)
+        cf  = ax.contourf(X, Y, Z, levels=12, cmap=cmap, alpha=0.85)
+        ax.contour(X, Y, Z, levels=12, colors="k", linewidths=0.4, alpha=0.4)
+        ax.scatter(xs, ys, s=1, alpha=0.07, color="steelblue")
+        rect = plt.Rectangle((0,0), 20, 20, fill=False,
+                              edgecolor="black", linewidth=2, linestyle="--")
+        ax.add_patch(rect)
+        plt.colorbar(cf, ax=ax, label="Density")
+        ax.set_xlim(-1, 21); ax.set_ylim(-1, 21)
+        ax.set_title(f"{label}\nrho={rho:.3f},  mu=({mu[0]:.2f},{mu[1]:.2f})",
+                     fontweight="bold")
+        ax.set_xlabel("X (miles)"); ax.set_ylabel("Y (miles)")
+        ax.legend(fontsize=9)
+    plt.tight_layout()
+    path1 = os.path.join(save_dir, "bvn_fitted_contours.png")
+    plt.savefig(path1, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"  Saved: {path1}")
+
+    # ── Figure 2: Acceptance-rejection illustration ───────────────────────────
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    fig.suptitle(
+        "Acceptance-Rejection Sampling — Enforcing the [0,20]^2 Boundary\n"
+        "Red = rejected (outside boundary);  Blue = accepted",
+        fontsize=11, fontweight="bold"
+    )
+    rng_fig = np.random.default_rng(99)
+    n_demo  = 2000
+    for ax, mu, cov, label in [
+        (axes[0], mu_pu, cov_pu, "Pickup"),
+        (axes[1], mu_do, cov_do, "Dropoff"),
+    ]:
+        bvn     = multivariate_normal(mean=mu, cov=cov)
+        samples = bvn.rvs(size=n_demo, random_state=rng_fig)
+        inside  = ((samples[:,0]>=0)&(samples[:,0]<=20)&
+                   (samples[:,1]>=0)&(samples[:,1]<=20))
+        ax.scatter(samples[~inside,0], samples[~inside,1],
+                   s=4, alpha=0.5, color="crimson",
+                   label=f"Rejected ({(~inside).sum()})")
+        ax.scatter(samples[inside,0],  samples[inside,1],
+                   s=4, alpha=0.3, color="steelblue",
+                   label=f"Accepted ({inside.sum()})")
+        rect = plt.Rectangle((0,0), 20, 20, fill=False,
+                              edgecolor="black", linewidth=2.5, linestyle="--",
+                              label="[0,20] boundary")
+        ax.add_patch(rect)
+        ax.set_xlim(-5, 25); ax.set_ylim(-5, 25)
+        ax.set_xlabel("X (miles)"); ax.set_ylabel("Y (miles)")
+        acc_rate = inside.sum() / n_demo * 100
+        ax.set_title(f"{label}  acceptance rate: {acc_rate:.1f}%", fontweight="bold")
+        ax.legend(fontsize=9)
+        for v in [0, 20]:
+            ax.axvline(v, color="gray", lw=0.8, ls=":")
+            ax.axhline(v, color="gray", lw=0.8, ls=":")
+    plt.tight_layout()
+    path2 = os.path.join(save_dir, "bvn_acceptance_rejection.png")
+    plt.savefig(path2, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"  Saved: {path2}")
+
+    # ── Figure 3: Marginals — observed vs BVN vs KDE reference ───────────────
+    fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+    fig.suptitle(
+        "Marginal Distributions — Observed vs BVN Marginal vs KDE Reference\n"
+        "KDE (green dashed) = non-parametric benchmark",
+        fontsize=11, fontweight="bold"
+    )
+    xplot = np.linspace(0, 20, 300)
+    cov_do_ = np.cov(dx, dy)
+    configs = [
+        (axes[0,0], px, px.mean(), np.sqrt(cov_pu[0,0]), "Pickup X"),
+        (axes[0,1], py, py.mean(), np.sqrt(cov_pu[1,1]), "Pickup Y"),
+        (axes[1,0], dx, dx.mean(), np.sqrt(cov_do_[0,0]), "Dropoff X"),
+        (axes[1,1], dy, dy.mean(), np.sqrt(cov_do_[1,1]), "Dropoff Y"),
+    ]
+    for ax, data, mu_1d, sig_1d, label in configs:
+        kde1d = gaussian_kde(data)
+        ax.hist(data, bins=60, density=True, alpha=0.35,
+                color="steelblue", label="Observed data")
+        ax.plot(xplot, norm.pdf(xplot, loc=mu_1d, scale=sig_1d),
+                color="crimson", lw=2.5,
+                label=f"BVN marginal  N({mu_1d:.2f}, {sig_1d:.2f})")
+        ax.plot(xplot, kde1d(xplot),
+                color="darkgreen", lw=2.0, linestyle="--",
+                label="KDE (non-parametric reference)")
+        ax.set_xlabel(f"{label} (miles)", fontsize=9)
+        ax.set_ylabel("Density", fontsize=9)
+        ax.set_title(label, fontweight="bold")
+        ax.legend(fontsize=8); ax.set_xlim(0, 20)
+    plt.tight_layout()
+    path3 = os.path.join(save_dir, "bvn_marginals.png")
+    plt.savefig(path3, dpi=150, bbox_inches="tight")
+    plt.show()
+    print(f"  Saved: {path3}")
+    print("\n  All BVN diagnostic figures generated.")
+
+generate_bvn_figures(riders)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — DATACLASSES
@@ -580,102 +690,254 @@ spatial_model_selection(riders, drivers)
 
 @dataclass
 class Driver:
-    id: int
-    x: float
-    y: float
-    online: bool = False
-    busy: bool = False
-    wants_offline: bool = False  # True = go offline after current ride completes
-    offline_time: float | None = None  # scheduled offline time
-    busy_since: float | None = None  # time of last match (for busy time accounting)
-    arrival_time: float | None = None  # time driver came online
-
+    id:              int
+    x:               float
+    y:               float
+    online:          bool        = False
+    busy:            bool        = False
+    wants_offline:   bool        = False    # True = go offline after current ride completes
+    repositioning:   bool        = False    # True = en route to quadrant centroid
+    offline_time:    float | None = None    # scheduled offline time
+    busy_since:      float | None = None    # time of last match (for busy time accounting)
+    arrival_time:    float | None = None    # time driver came online
 
 @dataclass
 class Rider:
-    id: int
+    id:           int
     request_time: float
-    pickup_x: float
-    pickup_y: float
-    dropoff_x: float
-    dropoff_y: float
-    pickup_dist: float = 0.0  # deadhead distance: driver current loc → pickup
-    status: str = "waiting"
-    cancel_time: float | None = None
-    driver_id: int | None = None
-
+    pickup_x:     float
+    pickup_y:     float
+    dropoff_x:    float
+    dropoff_y:    float
+    pickup_dist:  float       = 0.0         # deadhead distance: driver current loc → pickup
+    status:       str         = "waiting"
+    cancel_time:  float | None = None
+    driver_id:    int   | None = None
+    surge_mult:   float        = 1.0        # fare multiplier locked in at matching time
 
 @dataclass(order=True)
 class Event:
-    time: float
-    kind: str
-    rider_id: int | None = None
+    time:      float
+    kind:      str
+    rider_id:  int | None = None
     driver_id: int | None = None
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 5 — TRUNCATED BIVARIATE NORMAL TRIP SAMPLER
+#
+# Following supervisor guidance: fit a Bivariate Normal jointly to (x, y) for
+# each of pickup and dropoff, then enforce the [0,20] boundary using
+# acceptance-rejection sampling.
+#
+# Method:
+#   1. Fit BVN(mu, Sigma) to observed (pickup_x, pickup_y) via MLE
+#      (MLE for BVN = sample mean and sample covariance matrix).
+#   2. Fit BVN(mu, Sigma) to observed (dropoff_x, dropoff_y) via MLE.
+#   3. To sample one trip: draw (px,py) from pickup BVN, draw (dx,dy) from
+#      dropoff BVN, reject any draw where any coordinate falls outside [0,20].
+#      Repeat until n accepted draws obtained.
+#   4. Pre-sample a pool of n trips before each replication so the event loop
+#      never calls the sampler at runtime.
+#
+# Acceptance rate: empirically ~85% (matching the ~8.5% out-of-bounds rate
+# observed with the KDE). Oversample by 25% to guarantee n accepted draws
+# in a single batch without looping.
+#
+# Preserves: x-y correlation (via BVN covariance), spatial bias (via BVN mean),
+#            hard [0,20] boundary (via acceptance-rejection).
+# Does not preserve: non-elliptical density structure (BVN is elliptical by
+#                    construction) — acknowledged in report.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def fit_truncated_bvn(riders_df):
+    """
+    Fits two independent BVNs:
+      - pickup  BVN: MLE on (pickup_x,  pickup_y)
+      - dropoff BVN: MLE on (dropoff_x, dropoff_y)
+
+    MLE for a BVN is simply the sample mean vector and sample covariance matrix.
+
+    Returns a dict with keys 'pickup' and 'dropoff', each containing
+    {'mean': array(2,), 'cov': array(2,2)}.
+    Prints fitted parameters and Pearson correlations.
+    """
+    results = {}
+    for label, xcol, ycol in [
+        ("pickup",  "pickup_x",  "pickup_y"),
+        ("dropoff", "dropoff_x", "dropoff_y"),
+    ]:
+        xs  = riders_df[xcol].values
+        ys  = riders_df[ycol].values
+        mu  = np.array([xs.mean(), ys.mean()])
+        cov = np.cov(xs, ys)
+        rho = cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1])
+        results[label] = {"mean": mu, "cov": cov}
+
+        print(f"\n  Truncated BVN — {label}:")
+        print(f"    μ  = ({mu[0]:.4f}, {mu[1]:.4f})")
+        print(f"    σ  = ({np.sqrt(cov[0,0]):.4f}, {np.sqrt(cov[1,1]):.4f})")
+        print(f"    ρ  = {rho:.4f}  (Pearson correlation)")
+        print(f"    Σ  = [[{cov[0,0]:.4f}, {cov[0,1]:.4f}],")
+        print(f"           [{cov[1,0]:.4f}, {cov[1,1]:.4f}]]")
+
+    return results
+
+
+def build_trip_pool(bvn_params, n, seed, lo=0.0, hi=20.0):
+    """
+    Pre-samples n trips using acceptance-rejection on the truncated BVN.
+
+    For each draw:
+      - Sample (px, py) from pickup  BVN
+      - Sample (dx, dy) from dropoff BVN
+      - Accept only if all four coordinates lie in [lo, hi]
+
+    Oversamples by 25% in one batch to achieve n accepted draws without
+    looping. If the batch yields fewer than n accepted draws (acceptance
+    rate unexpectedly low), raises an informative error.
+
+    Returns array shape (n, 4): columns are [px, py, dx, dy].
+    """
+    rng         = np.random.default_rng(seed)
+    n_draw      = int(n * 1.25)   # 25% oversample — acceptance rate ~85%
+
+    pu = multivariate_normal(mean=bvn_params["pickup"]["mean"],
+                             cov=bvn_params["pickup"]["cov"])
+    do = multivariate_normal(mean=bvn_params["dropoff"]["mean"],
+                             cov=bvn_params["dropoff"]["cov"])
+
+    pu_samples = pu.rvs(size=n_draw, random_state=rng)   # shape (n_draw, 2)
+    do_samples = do.rvs(size=n_draw, random_state=rng)   # shape (n_draw, 2)
+
+    # Acceptance mask: all four coordinates inside [lo, hi]
+    accept = (
+        (pu_samples[:, 0] >= lo) & (pu_samples[:, 0] <= hi) &
+        (pu_samples[:, 1] >= lo) & (pu_samples[:, 1] <= hi) &
+        (do_samples[:, 0] >= lo) & (do_samples[:, 0] <= hi) &
+        (do_samples[:, 1] >= lo) & (do_samples[:, 1] <= hi)
+    )
+
+    accepted = np.hstack([pu_samples[accept], do_samples[accept]])  # shape (k, 4)
+
+    acceptance_rate = accept.sum() / n_draw
+    print(f"    Acceptance-rejection: {accept.sum():,}/{n_draw:,} accepted "
+          f"({acceptance_rate*100:.1f}% acceptance rate)")
+
+    if len(accepted) < n:
+        raise RuntimeError(
+            f"Acceptance-rejection yielded only {len(accepted)} samples "
+            f"(needed {n}). Increase oversample factor or reduce n."
+        )
+
+    return accepted[:n]
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 5 — 4D KDE TRIP SAMPLER
+# SECTION 6 — QUADRANT CENTROIDS
 #
-# The KDE is a mixture of Gaussians centred at each observed trip:
-#   f_hat(x) = (1/n) * sum_i K_H(x - x_i)
+# Divides the 20×20 grid into four quadrants centred on the rider pickup
+# hotspot (empirically at ~8.36, 12.32). Each quadrant's centroid is the
+# density-weighted mean of all pickup points within that quadrant — so
+# drivers reposition to where demand actually concentrates, not just the
+# geometric centre of the quadrant.
 #
-# Sampling = pick a random data point, add Gaussian noise scaled by bandwidth H.
-# This is what kde.resample() does internally.
-#
-# A pool of 20,000 trips is pre-sampled per replication so the event loop
-# never calls the KDE at runtime — keeping simulation speed fast.
+# Quadrant layout (split at hotspot):
+#   Q2 (NW) | Q1 (NE)
+#   ─────────────────
+#   Q3 (SW) | Q4 (SE)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_kde(riders_df):
+def compute_quadrant_centroids(riders_df, split_x=None, split_y=None):
     """
-    Fits a 4D Gaussian KDE to observed trip data.
-    Dimensions: (pickup_x, pickup_y, dropoff_x, dropoff_y).
-    Called once and reused across all replications.
+    Computes the density-weighted centroid of each of the four quadrants,
+    split at (split_x, split_y). Defaults to the empirical pickup hotspot.
+
+    Returns a list of four (cx, cy) tuples ordered [NE, NW, SW, SE].
     """
-    trip_data = np.vstack([
-        riders_df["pickup_x"].values,
-        riders_df["pickup_y"].values,
-        riders_df["dropoff_x"].values,
-        riders_df["dropoff_y"].values,
-    ])
-    print(f"\nFitting 4D KDE on {trip_data.shape[1]:,} observed trips...")
-    kde = gaussian_kde(trip_data)
-    print("  KDE fitted. Bandwidth (Scott's rule) applied.")
-    return kde
+    px = riders_df["pickup_x"].values
+    py = riders_df["pickup_y"].values
+
+    if split_x is None: split_x = float(px.mean())
+    if split_y is None: split_y = float(py.mean())
+
+    quadrants = {
+        "NE": (px >= split_x) & (py >= split_y),
+        "NW": (px <  split_x) & (py >= split_y),
+        "SW": (px <  split_x) & (py <  split_y),
+        "SE": (px >= split_x) & (py <  split_y),
+    }
+
+    centroids = {}
+    for label, mask in quadrants.items():
+        if mask.sum() > 0:
+            centroids[label] = (float(px[mask].mean()), float(py[mask].mean()))
+        else:
+            centroids[label] = (split_x, split_y)   # fallback: split point
+
+    print("\n── Quadrant Centroids (split at pickup hotspot) ──────────────────")
+    print(f"   Split point : ({split_x:.2f}, {split_y:.2f})")
+    for label, (cx, cy) in centroids.items():
+        n = quadrants[label].sum()
+        print(f"   {label}: ({cx:.2f}, {cy:.2f})  [{n:,} pickup observations]")
+
+    return [centroids["NE"], centroids["NW"], centroids["SW"], centroids["SE"]]
 
 
-def build_trip_pool(kde, n, seed, lo=0.0, hi=20.0):
+
+def compute_surge_multiplier(
+    n_waiting,
+    n_idle,
+    surge_on   = True,
+    k          = 0.8,
+    r_min      = 2.0,
+    r_cap      = 8.0,
+    max_mult   = 3.0,
+):
     """
-    Pre-samples n trips from the KDE, clips to [lo, hi].
-    Returns array shape (n, 4): [pickup_x, pickup_y, dropoff_x, dropoff_y].
-    Oversamples by 10% to account for clipping near grid boundaries
-    (~8.5% of samples fall outside [0,20] and are clipped).
+    Exponential (Plinko-style) surge multiplier.
+
+    ratio = n_waiting / max(n_idle, 1)
+    - Below r_min (2.0): returns 1.0  (no surge)
+    - At r_min + r_cap (10.0): returns max_mult (3.0x)
+    - Exponentially interpolated between, k=0.8 gives balanced curve
+    - Capped at max_mult for any ratio beyond r_min + r_cap
+    - surge_on=False disables entirely (returns 1.0 always)
     """
-    raw = kde.resample(int(n * 1.1), seed=seed).T
-    clipped = np.clip(raw, lo, hi)
-    return clipped[:n]
+    if not surge_on:
+        return 1.0
+    ratio  = n_waiting / max(n_idle, 1)
+    if ratio < r_min:
+        return 1.0
+    excess = min(ratio - r_min, r_cap)
+    scale  = max_mult - 1.0
+    denom  = float(np.exp(k * r_cap) - 1.0)
+    return 1.0 + scale * (float(np.exp(k * excess)) - 1.0) / denom
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — DISCRETE EVENT SIMULATION
+# SECTION 7 — DISCRETE EVENT SIMULATION
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_simulation(
-        T_end: float = 200.0,
-        seed: int = 1,
-        square_min: float = 0.0,
-        square_max: float = 20.0,
-        lam_driver_on: float = 4.65,  # MLE-estimated driver arrival rate /hr
-        lam_rider_arrival: float = 34.92,  # MLE-estimated rider arrival rate /hr
-        lam_patience: float = 5.0,  # briefed patience rate /hr (censored)
-        speed_mph: float = 20.0,
-        fare_base: float = 3.0,  # £3 base charge
-        fare_per_mile: float = 2.0,  # £2 per trip mile
-        cost_per_mile: float = 0.20,  # £0.20/mile on ALL miles (deadhead + trip)
-        burn_in: float = 5.0,  # hours before metrics are recorded
-        trip_pool: np.ndarray | None = None,
+    T_end:                float = 200.0,
+    seed:                 int   = 1,
+    square_min:           float = 0.0,
+    square_max:           float = 20.0,
+    lam_driver_on:        float = 4.65,    # MLE-estimated driver arrival rate /hr
+    lam_rider_arrival:    float = 34.92,   # MLE-estimated rider arrival rate /hr
+    lam_patience:         float = 5.0,     # briefed patience rate /hr (censored)
+    speed_mph:            float = 20.0,
+    fare_base:            float = 3.0,     # £3 base charge
+    fare_per_mile:        float = 2.0,     # £2 per trip mile
+    cost_per_mile:        float = 0.20,    # £0.20/mile on ALL miles (deadhead + trip)
+    burn_in:              float = 5.0,     # hours before metrics are recorded
+    trip_pool:            np.ndarray | None = None,
+    # ── Quadrant repositioning ─────────────────────────────────────────────
+    quadrant_centroids:   list | None = None,  # list of 4 (x,y) tuples; None = disabled
+    # ── Surge pricing ──────────────────────────────────────────────────────
+    surge_on:             bool  = True,    # False disables surge entirely
 ) -> dict:
-    rng = np.random.default_rng(seed)
+
+    rng        = np.random.default_rng(seed)
     pool_index = [0]
 
     def sample_trip():
@@ -690,110 +952,139 @@ def run_simulation(
         dy = float(rng.uniform(square_min, square_max))
         return px, py, dx, dy
 
-    def sample_driver_iat():
-        return float(rng.exponential(scale=1 / lam_driver_on))
+    def sample_driver_iat():     return float(rng.exponential(scale=1 / lam_driver_on))
+    def sample_driver_dur():     return float(rng.uniform(6.0, 8.0))
+    def sample_rider_iat():      return float(rng.exponential(scale=1 / lam_rider_arrival))
+    def sample_patience():       return float(rng.exponential(scale=1 / lam_patience))
+    def euclid(x1, y1, x2, y2): return float(np.sqrt((x2 - x1)**2 + (y2 - y1)**2))
+    def mean_time(d):            return d / speed_mph
+    def actual_time(mu):         return float(rng.uniform(0.8 * mu, 1.2 * mu))
 
-    def sample_driver_dur():
-        return float(rng.uniform(6.0, 8.0))
+    def nearest_quadrant_centroid(x, y):
+        """Returns the (cx, cy) of the quadrant centroid nearest to (x, y)."""
+        return min(quadrant_centroids,
+                   key=lambda c: euclid(x, y, c[0], c[1]))
 
-    def sample_rider_iat():
-        return float(rng.exponential(scale=1 / lam_rider_arrival))
-
-    def sample_patience():
-        return float(rng.exponential(scale=1 / lam_patience))
-
-    def euclid(x1, y1, x2, y2):
-        return float(np.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2))
-
-    def mean_time(d):
-        return d / speed_mph
-
-    def actual_time(mu):
-        return float(rng.uniform(0.8 * mu, 1.2 * mu))
-
-    driver_objects = {}
-    rider_objects = {}
-    idle_drivers = []
-    waiting_riders = []
-    next_driver_id = 0
-    next_rider_id = 0
-    completed_waits = []
-    abandoned_count = 0
-    completed_count = 0
-    driver_earnings = {}
-    driver_busy_time = {}
+    driver_objects     = {}
+    rider_objects      = {}
+    idle_drivers       = []
+    waiting_riders     = []
+    next_driver_id     = 0
+    next_rider_id      = 0
+    completed_waits    = []
+    abandoned_count    = 0
+    completed_count    = 0
+    surge_revenue      = 0.0   # total extra revenue collected during surge periods
+    surge_ride_count   = 0     # number of rides completed at surge price
+    driver_earnings    = {}
+    driver_busy_time   = {}
     driver_online_time = {}
 
     heap = []
-
-    def push(e):
-        heapq.heappush(heap, e)
-
-    def pop():
-        return heapq.heappop(heap)
+    def push(e): heapq.heappush(heap, e)
+    def pop():   return heapq.heappop(heap)
 
     push(Event(time=sample_driver_iat(), kind="driver_arrives"))
-    push(Event(time=sample_rider_iat(), kind="rider_request"))
+    push(Event(time=sample_rider_iat(),  kind="rider_request"))
 
     def record_online_time(driver_id, current_time):
-        d = driver_objects[driver_id]
+        d     = driver_objects[driver_id]
         start = max(d.arrival_time, burn_in)
         if current_time > start:
             driver_online_time[driver_id] = (
-                    driver_online_time.get(driver_id, 0.0) + current_time - start)
+                driver_online_time.get(driver_id, 0.0) + current_time - start)
 
     def find_closest_driver(rx, ry):
-        if not idle_drivers: return None
-        return min(idle_drivers,
+        """Find nearest idle non-repositioning driver. Falls back to repositioning drivers."""
+        available = [did for did in idle_drivers
+                     if not driver_objects[did].repositioning]
+        if not available:
+            available = idle_drivers   # fall back to all idle if all are repositioning
+        if not available: return None
+        return min(available,
                    key=lambda did: euclid(driver_objects[did].x, driver_objects[did].y, rx, ry))
 
     def find_closest_rider(dx, dy):
         if not waiting_riders: return None
         return min(waiting_riders,
-                   key=lambda rid: euclid(rider_objects[rid].pickup_x, rider_objects[rid].pickup_y, dx, dy))
+                   key=lambda rid: euclid(rider_objects[rid].pickup_x,
+                                          rider_objects[rid].pickup_y, dx, dy))
 
     def match(driver_id, rider_id, t):
-        d = driver_objects[driver_id];
-        r = rider_objects[rider_id]
-        d.busy = True;
-        r.status = "matched";
-        r.driver_id = driver_id
-        d.busy_since = t
-        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y)
-        r.pickup_dist = dist_to_pickup
+        d = driver_objects[driver_id]; r = rider_objects[rider_id]
+        d.busy          = True
+        d.repositioning = False   # cancel any repositioning — rider takes priority
+        r.status        = "matched"
+        r.driver_id     = driver_id
+        d.busy_since    = t
+        dist_to_pickup  = euclid(d.x, d.y, r.pickup_x, r.pickup_y)
+        r.pickup_dist   = dist_to_pickup
         if driver_id in idle_drivers:   idle_drivers.remove(driver_id)
-        if rider_id in waiting_riders: waiting_riders.remove(rider_id)
+        if rider_id  in waiting_riders: waiting_riders.remove(rider_id)
+        # Lock in surge multiplier at matching time (realistic: price fixed when rider accepts)
+        r.surge_mult = compute_surge_multiplier(
+            n_waiting=len(waiting_riders),
+            n_idle=len(idle_drivers),
+            surge_on=surge_on,
+        )
         push(Event(time=t + actual_time(mean_time(dist_to_pickup)),
                    kind="pickup", rider_id=rider_id, driver_id=driver_id))
+
+    def reposition(driver_id, current_time):
+        """
+        Sends an idle driver to the centroid of their nearest high-demand quadrant.
+        Repositioning costs fuel but earns no fare. The driver remains in idle_drivers
+        so they can still be matched to a rider — if matched, the reposition_arrive
+        event is simply ignored (driver no longer exists in driver_objects or has
+        repositioning=False).
+        """
+        d  = driver_objects[driver_id]
+        cx, cy = nearest_quadrant_centroid(d.x, d.y)
+        dist   = euclid(d.x, d.y, cx, cy)
+        if dist < 0.01:
+            return   # already at centroid — no need to move
+        d.repositioning = True
+        travel_t = actual_time(mean_time(dist))
+        # Repositioning fuel cost charged at dropoff-equivalent point
+        repo_cost = cost_per_mile * dist
+        push(Event(time=current_time + travel_t,
+                   kind="reposition_arrive",
+                   driver_id=driver_id))
+        # Store destination on driver object for fuel accounting
+        d.repo_dest_x  = cx
+        d.repo_dest_y  = cy
+        d.repo_cost    = repo_cost
 
     current_time = 0.0
 
     while heap:
-        event = pop()
+        event        = pop()
         current_time = event.time
         if current_time > T_end: break
         post_burnin = current_time >= burn_in
 
         # ── DRIVER ARRIVES ────────────────────────────────────────────────────
         if event.kind == "driver_arrives":
-            did = next_driver_id;
-            next_driver_id += 1
-            x = float(rng.uniform(square_min, square_max))
-            y = float(rng.uniform(square_min, square_max))
+            did = next_driver_id; next_driver_id += 1
+            x   = float(rng.uniform(square_min, square_max))
+            y   = float(rng.uniform(square_min, square_max))
             driver_objects[did] = Driver(id=did, x=x, y=y, online=True,
                                          arrival_time=current_time,
-                                         wants_offline=False)
+                                         wants_offline=False,
+                                         repositioning=False)
             idle_drivers.append(did)
-            driver_earnings[did] = 0.0
-            driver_busy_time[did] = 0.0
+            driver_earnings[did]    = 0.0
+            driver_busy_time[did]   = 0.0
             driver_online_time[did] = 0.0
             off_t = current_time + sample_driver_dur()
             driver_objects[did].offline_time = off_t
-            push(Event(time=off_t, kind="driver_offline", driver_id=did))
+            push(Event(time=off_t,                           kind="driver_offline", driver_id=did))
             push(Event(time=current_time + sample_driver_iat(), kind="driver_arrives"))
             closest_rider = find_closest_rider(x, y)
             if closest_rider is not None:
                 match(did, closest_rider, current_time)
+            elif quadrant_centroids is not None:
+                reposition(did, current_time)
 
         # ── DRIVER OFFLINE ────────────────────────────────────────────────────
         elif event.kind == "driver_offline":
@@ -801,16 +1092,34 @@ def run_simulation(
             if did not in driver_objects: continue
             d = driver_objects[did]
             if d.busy:
-                d.wants_offline = True  # finish current ride first
+                d.wants_offline = True          # finish current ride first
             else:
                 if did in idle_drivers: idle_drivers.remove(did)
                 record_online_time(did, current_time)
                 del driver_objects[did]
 
+        # ── REPOSITION ARRIVE ─────────────────────────────────────────────────
+        elif event.kind == "reposition_arrive":
+            did = event.driver_id
+            if did not in driver_objects: continue
+            d = driver_objects[did]
+            if not d.repositioning:
+                continue   # was matched to a rider before arriving — nothing to do
+            # Driver reaches quadrant centroid
+            d.x             = d.repo_dest_x
+            d.y             = d.repo_dest_y
+            d.repositioning = False
+            # Charge repositioning fuel cost to driver earnings
+            if post_burnin:
+                driver_earnings[did] = driver_earnings.get(did, 0.0) - d.repo_cost
+            # Immediately check for waiting riders at new position
+            closest_rider = find_closest_rider(d.x, d.y)
+            if closest_rider is not None:
+                match(did, closest_rider, current_time)
+
         # ── RIDER REQUEST ─────────────────────────────────────────────────────
         elif event.kind == "rider_request":
-            rid = next_rider_id;
-            next_rider_id += 1
+            rid = next_rider_id; next_rider_id += 1
             px, py, dx, dy = sample_trip()
             rider_objects[rid] = Rider(id=rid, request_time=current_time,
                                        pickup_x=px, pickup_y=py,
@@ -838,14 +1147,11 @@ def run_simulation(
 
         # ── PICKUP ────────────────────────────────────────────────────────────
         elif event.kind == "pickup":
-            rid = event.rider_id;
-            did = event.driver_id
+            rid = event.rider_id; did = event.driver_id
             if rid not in rider_objects: continue
-            r = rider_objects[rid];
-            d = driver_objects[did]
+            r = rider_objects[rid]; d = driver_objects[did]
             r.status = "in_ride"
-            d.x = r.pickup_x;
-            d.y = r.pickup_y
+            d.x = r.pickup_x; d.y = r.pickup_y
             if post_burnin:
                 completed_waits.append(current_time - r.request_time)
             dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
@@ -854,22 +1160,25 @@ def run_simulation(
 
         # ── DROPOFF ───────────────────────────────────────────────────────────
         elif event.kind == "dropoff":
-            rid = event.rider_id;
-            did = event.driver_id
+            rid = event.rider_id; did = event.driver_id
             if rid not in rider_objects: continue
-            r = rider_objects[rid];
-            d = driver_objects[did]
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
+            r = rider_objects[rid]; d = driver_objects[did]
+            dist_trip   = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
             total_miles = r.pickup_dist + dist_trip
-            fare = fare_base + fare_per_mile * dist_trip
-            cost = cost_per_mile * total_miles
-            d.x = r.dropoff_x;
-            d.y = r.dropoff_y
+            # Use surge multiplier locked in at matching time
+            effective_multiplier = getattr(r, 'surge_mult', 1.0)
+            base_fare   = fare_base + fare_per_mile * dist_trip
+            fare        = base_fare * effective_multiplier
+            cost        = cost_per_mile * total_miles
+            d.x = r.dropoff_x; d.y = r.dropoff_y
             if post_burnin:
-                driver_earnings[did] = driver_earnings.get(did, 0.0) + fare - cost
+                driver_earnings[did]  = driver_earnings.get(did, 0.0) + fare - cost
                 driver_busy_time[did] = driver_busy_time.get(did, 0.0) + (
-                        current_time - d.busy_since)
+                    current_time - d.busy_since)
                 completed_count += 1
+                if effective_multiplier > 1.0:
+                    surge_revenue    += fare - base_fare
+                    surge_ride_count += 1
             r.status = "completed"
             del rider_objects[rid]
             d.busy = False
@@ -882,6 +1191,8 @@ def run_simulation(
                 match(did, closest_rider, current_time)
             else:
                 idle_drivers.append(did)
+                if quadrant_centroids is not None:
+                    reposition(did, current_time)
 
     # Cleanup: record online time for drivers still active at T_end
     for did, d in list(driver_objects.items()):
@@ -889,104 +1200,144 @@ def run_simulation(
         if T_end > start:
             driver_online_time[did] = driver_online_time.get(did, 0.0) + (T_end - start)
 
-    total_requests = completed_count + abandoned_count
-    avg_wait = float(np.mean(completed_waits)) * 60 if completed_waits else 0.0
+    total_requests   = completed_count + abandoned_count
+    avg_wait         = float(np.mean(completed_waits)) * 60 if completed_waits else 0.0
     abandonment_rate = abandoned_count / total_requests if total_requests > 0 else 0.0
 
     earnings_per_hr = []
-    utilisation = []
+    utilisation     = []
     for did in driver_earnings:
         online = driver_online_time.get(did, 0.0)
-        busy = driver_busy_time.get(did, 0.0)
+        busy   = driver_busy_time.get(did, 0.0)
         earned = driver_earnings[did]
         if online > 0:
             earnings_per_hr.append(earned / online)
             utilisation.append(busy / online)
 
     return {
-        "completed_rides": completed_count,
-        "abandoned_rides": abandoned_count,
-        "total_requests": total_requests,
-        "abandonment_rate": round(abandonment_rate, 4),
-        "avg_wait_min": round(avg_wait, 2),
+        "completed_rides"    : completed_count,
+        "abandoned_rides"    : abandoned_count,
+        "total_requests"     : total_requests,
+        "abandonment_rate"   : round(abandonment_rate, 4),
+        "avg_wait_min"       : round(avg_wait, 2),
         "avg_earnings_per_hr": round(float(np.mean(earnings_per_hr)) if earnings_per_hr else 0.0, 2),
-        "avg_utilisation": round(float(np.mean(utilisation)) if utilisation else 0.0, 4),
-        "earnings_std": round(float(np.std(earnings_per_hr)) if earnings_per_hr else 0.0, 2),
-        "driver_earnings": driver_earnings,
-        "driver_online_time": driver_online_time,
-        "driver_busy_time": driver_busy_time,
-        "completed_waits": completed_waits,
-        "earnings_per_hr": earnings_per_hr,
+        "avg_utilisation"    : round(float(np.mean(utilisation))     if utilisation     else 0.0, 4),
+        "earnings_std"       : round(float(np.std(earnings_per_hr))  if earnings_per_hr else 0.0, 2),
+        "surge_revenue"      : round(surge_revenue, 2),
+        "surge_ride_count"   : surge_ride_count,
+        "surge_ride_pct"     : round(surge_ride_count / completed_count, 4) if completed_count else 0.0,
+        "driver_earnings"    : driver_earnings,
+        "driver_online_time" : driver_online_time,
+        "driver_busy_time"   : driver_busy_time,
+        "completed_waits"    : completed_waits,
+        "earnings_per_hr"    : earnings_per_hr,
     }
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 7 — CONFIDENCE INTERVAL UTILITY
+# SECTION 8 — CONFIDENCE INTERVAL UTILITY
 # ══════════════════════════════════════════════════════════════════════════════
 
 def confidence_interval(data):
     """Returns (mean, lower_95, upper_95) using Student's t-distribution."""
-    n = len(data)
+    n    = len(data)
     mean = float(np.mean(data))
-    se = float(np.std(data, ddof=1)) / np.sqrt(n)
-    t_c = t_dist.ppf(0.975, df=n - 1)
+    se   = float(np.std(data, ddof=1)) / np.sqrt(n)
+    t_c  = t_dist.ppf(0.975, df=n - 1)
     return mean, mean - t_c * se, mean + t_c * se
 
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 9 — FIT TRUNCATED BVN AND QUADRANT CENTROIDS
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n" + "=" * 70)
+print("FITTING TRUNCATED BIVARIATE NORMAL  (supervisor-recommended model)")
+print("MLE = sample mean and covariance; boundary enforced by acceptance-rejection")
+print("=" * 70)
+
+bvn_params = fit_truncated_bvn(riders)
+quad_cents = compute_quadrant_centroids(riders)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 8 — FIT KDE, DEMO RUN, AND 20 REPLICATIONS
+# SECTION 10 — FOUR-SCENARIO COMPARISON
+#
+#  Scenario A — Baseline        : no quadrant repositioning, no surge
+#  Scenario B — Quadrants only  : repositioning enabled, no surge
+#  Scenario C — Surge only      : no repositioning, surge at queue >= 10, ×1.5
+#  Scenario D — Both combined   : repositioning + surge
+#
+# Each scenario runs 20 independent replications (1000hr, 5hr burn-in).
 # ══════════════════════════════════════════════════════════════════════════════
 
-# Fit KDE once on all rider data — reused across every replication
-trip_kde = build_kde(riders)
-
-# Single demonstration run (seed=42)
-demo_pool = build_trip_pool(trip_kde, n=20000, seed=42)
-results = run_simulation(T_end=200, seed=42, burn_in=5.0, trip_pool=demo_pool)
-
-print("\n" + "=" * 55)
-print("SIMULATION RESULTS  (single run, seed=42)")
-print("=" * 55)
-print(f"  Completed rides  : {results['completed_rides']:,}")
-print(f"  Abandoned rides  : {results['abandoned_rides']:,}")
-print(f"  Total requests   : {results['total_requests']:,}")
-print(f"  Abandonment rate : {results['abandonment_rate'] * 100:.1f}%")
-print(f"  Avg wait time    : {results['avg_wait_min']:.2f} minutes")
-print(f"  Avg earnings/hr  : £{results['avg_earnings_per_hr']:.2f}")
-print(f"  Avg utilisation  : {results['avg_utilisation'] * 100:.1f}%")
-print(f"  Earnings std/hr  : £{results['earnings_std']:.2f}")
-
-# 20 independent replications
 N_REPS = 20
-rep_abandonment = []
-rep_wait = []
-rep_earnings = []
-rep_utilisation = []
-rep_earnings_std = []
 
-print(f"\nRunning {N_REPS} replications...")
-for rep in range(N_REPS):
-    pool = build_trip_pool(trip_kde, n=20000, seed=rep)
-    r = run_simulation(T_end=200, seed=rep, burn_in=5.0, trip_pool=pool)
-    rep_abandonment.append(r["abandonment_rate"])
-    rep_wait.append(r["avg_wait_min"])
-    rep_earnings.append(r["avg_earnings_per_hr"])
-    rep_utilisation.append(r["avg_utilisation"])
-    rep_earnings_std.append(r["earnings_std"])
-    print(f"  Rep {rep + 1:2d}/20 — abandon={r['abandonment_rate'] * 100:.1f}%  "
-          f"wait={r['avg_wait_min']:.1f}min  £{r['avg_earnings_per_hr']:.2f}/hr")
+scenarios = {
+    "A — Baseline"      : dict(quadrant_centroids=None,       surge_on=False),
+    "B — Quadrants"     : dict(quadrant_centroids=quad_cents, surge_on=False),
+    "C — Surge"         : dict(quadrant_centroids=None,       surge_on=True),
+    "D — Both combined" : dict(quadrant_centroids=quad_cents, surge_on=True),
+}
 
-ab_mean, ab_lo, ab_hi = confidence_interval(rep_abandonment)
-wt_mean, wt_lo, wt_hi = confidence_interval(rep_wait)
-er_mean, er_lo, er_hi = confidence_interval(rep_earnings)
-ut_mean, ut_lo, ut_hi = confidence_interval(rep_utilisation)
-es_mean, es_lo, es_hi = confidence_interval(rep_earnings_std)
+all_results = {}
 
-print("\n" + "=" * 65)
-print(f"REPLICATION RESULTS  ({N_REPS} runs, mean ± 95% CI)")
-print("=" * 65)
-print(f"  Abandonment rate  : {ab_mean * 100:.1f}%  [{ab_lo * 100:.1f}%, {ab_hi * 100:.1f}%]")
-print(f"  Avg wait time     : {wt_mean:.2f} min  [{wt_lo:.2f}, {wt_hi:.2f}]")
-print(f"  Avg earnings/hr   : £{er_mean:.2f}  [£{er_lo:.2f}, £{er_hi:.2f}]")
-print(f"  Avg utilisation   : {ut_mean * 100:.1f}%  [{ut_lo * 100:.1f}%, {ut_hi * 100:.1f}%]")
-print(f"  Earnings std/hr   : £{es_mean:.2f}  [£{es_lo:.2f}, £{es_hi:.2f}]")
+for scenario_name, kwargs in scenarios.items():
+    print(f"\n{'═'*65}")
+    print(f"  SCENARIO {scenario_name}")
+    print(f"{'═'*65}")
+
+    rep_ab, rep_wt, rep_er, rep_ut, rep_es = [], [], [], [], []
+    rep_surge_rev, rep_surge_pct           = [], []
+
+    for rep in range(N_REPS):
+        pool = build_trip_pool(bvn_params, n=50000, seed=rep)
+        r    = run_simulation(T_end=1000, seed=rep, burn_in=5.0,
+                              trip_pool=pool, **kwargs)
+        rep_ab.append(r["abandonment_rate"])
+        rep_wt.append(r["avg_wait_min"])
+        rep_er.append(r["avg_earnings_per_hr"])
+        rep_ut.append(r["avg_utilisation"])
+        rep_es.append(r["earnings_std"])
+        rep_surge_rev.append(r["surge_revenue"])
+        rep_surge_pct.append(r["surge_ride_pct"])
+        print(f"  Rep {rep+1:2d}/20  abandon={r['abandonment_rate']*100:.1f}%  "
+              f"wait={r['avg_wait_min']:.1f}min  £{r['avg_earnings_per_hr']:.2f}/hr  "
+              f"surge_rev=£{r['surge_revenue']:.0f}")
+
+    all_results[scenario_name] = {
+        "abandonment" : confidence_interval(rep_ab),
+        "wait"        : confidence_interval(rep_wt),
+        "earnings"    : confidence_interval(rep_er),
+        "utilisation" : confidence_interval(rep_ut),
+        "earn_std"    : confidence_interval(rep_es),
+        "surge_rev"   : confidence_interval(rep_surge_rev),
+        "surge_pct"   : confidence_interval(rep_surge_pct),
+    }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 11 — RESULTS SUMMARY TABLE
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n\n" + "═"*95)
+print(f"  SCENARIO COMPARISON  ({N_REPS} replications each, mean [95% CI])")
+print("═"*95)
+print(f"  {'Scenario':<22}  {'Abandon %':>10}  {'Wait (min)':>12}  "
+      f"{'£/hr':>10}  {'Util %':>8}  {'Surge rev £':>12}  {'Surge %':>8}")
+print("─"*95)
+
+for name, res in all_results.items():
+    ab  = res["abandonment"]
+    wt  = res["wait"]
+    er  = res["earnings"]
+    ut  = res["utilisation"]
+    sr  = res["surge_rev"]
+    sp  = res["surge_pct"]
+    print(f"  {name:<22}  "
+          f"{ab[0]*100:>5.1f} [{ab[1]*100:.1f},{ab[2]*100:.1f}]  "
+          f"{wt[0]:>6.2f} [{wt[1]:.2f},{wt[2]:.2f}]  "
+          f"{er[0]:>6.2f} [{er[1]:.2f},{er[2]:.2f}]  "
+          f"{ut[0]*100:>6.1f}  "
+          f"{sr[0]:>8.0f} [{sr[1]:.0f},{sr[2]:.0f}]  "
+          f"{sp[0]*100:>6.1f}%")
+
+print("═"*95)
+print("  Surge revenue = extra fare collected above baseline during surge periods.")
+print("  Surge % = fraction of completed rides that were priced at surge rate.")
