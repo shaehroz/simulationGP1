@@ -941,9 +941,9 @@ def run_simulation(
     # ── Surge pricing ──────────────────────────────────────────────────────
     surge_on:             bool  = True,    # False disables surge entirely
     # ── Detour ──────────────────────────────────────────────────────
-    detour_on:             bool  = False,    # False disables detour entirely
+    detour_on:             bool  = True,    # False disables detour entirely
     # ── Busy-driver preassignment ─────────────────────────────────────
-    busy_driver_on: bool = False,
+    busy_driver_on: bool = True,
     busy_driver_max_minutes: float = 10.0,
 ) -> dict:
 
@@ -975,13 +975,13 @@ def run_simulation(
         return min(quadrant_centroids,
                    key=lambda c: euclid(x, y, c[0], c[1]))
     
-    def detour_multiplier(detour_on = False):
-        if detour_on == False:
-            return 1.0
-        else: 
+    def detour_multiplier(detour_on):
+        if detour_on == True:
             # mean ~1.4, moderate variability; tune as needed
             m = float(rng.normal(loc=1.4, scale=0.15))
             return max(1.05, min(m, 2.0))
+        else: 
+            return 1.0
 
     driver_objects     = {}
     rider_objects      = {}
@@ -1013,7 +1013,7 @@ def run_simulation(
             driver_online_time[driver_id] = (
                 driver_online_time.get(driver_id, 0.0) + current_time - start)
 
-    def find_closest_driver(rx, ry):
+    def find_closest_driver(rx, ry, busy_driver_on):
         """Baseline if busy_driver_on=False. If True, also consider eligible busy drivers near dropoff."""
 
         # --- Baseline behaviour (unchanged) ---
@@ -1028,53 +1028,54 @@ def run_simulation(
                 available,
                 key=lambda did: euclid(driver_objects[did].x, driver_objects[did].y, rx, ry)
             )
+        else:
 
-        # --- Busy-driver mode ---
-        # Prefer idle drivers first (same as busy file) :contentReference[oaicite:8]{index=8}
-        if idle_drivers:
+            # --- Busy-driver mode ---
+            # Prefer idle drivers first (same as busy file) :contentReference[oaicite:8]{index=8}
+            if idle_drivers:
+                best_id, best_dist = None, float("inf")
+                for did in idle_drivers:
+                    d = driver_objects[did]
+                    dist = euclid(d.x, d.y, rx, ry)
+                    if dist < best_dist:
+                        best_dist, best_id = dist, did
+                return best_id
+
+            # Otherwise consider busy drivers finishing soon (adapted from busy file) :contentReference[oaicite:9]{index=9}
             best_id, best_dist = None, float("inf")
-            for did in idle_drivers:
-                d = driver_objects[did]
-                dist = euclid(d.x, d.y, rx, ry)
+            max_hr = busy_driver_max_minutes / 60.0
+
+            for did in busy_drivers:
+                d = driver_objects.get(did)
+                if d is None:
+                    continue
+
+                # must not be about to go offline
+                if d.wants_offline:
+                    continue
+
+                # if shift ends before/at current dropoff, don't preassign
+                if d.offline_time is not None and d.pending_dropoff_time is not None and d.offline_time <= d.pending_dropoff_time:
+                    continue
+
+                # must be actively in-ride and have a known dropoff time
+                if d.status != "in_ride" or d.pending_dropoff_time is None:
+                    continue
+
+                # must not already have a next ride queued
+                if d.pending_pickup:
+                    continue
+
+                time_to_dropoff = d.pending_dropoff_time - current_time
+                if time_to_dropoff < 0 or time_to_dropoff > max_hr:
+                    continue
+
+                # choose by closeness of future dropoff point to new pickup
+                dist = euclid(d.pending_dropoff_x, d.pending_dropoff_y, rx, ry)
                 if dist < best_dist:
                     best_dist, best_id = dist, did
+
             return best_id
-
-        # Otherwise consider busy drivers finishing soon (adapted from busy file) :contentReference[oaicite:9]{index=9}
-        best_id, best_dist = None, float("inf")
-        max_hr = busy_driver_max_minutes / 60.0
-
-        for did in busy_drivers:
-            d = driver_objects.get(did)
-            if d is None:
-                continue
-
-            # must not be about to go offline
-            if d.wants_offline:
-                continue
-
-            # if shift ends before/at current dropoff, don't preassign
-            if d.offline_time is not None and d.pending_dropoff_time is not None and d.offline_time <= d.pending_dropoff_time:
-                continue
-
-            # must be actively in-ride and have a known dropoff time
-            if d.status != "in_ride" or d.pending_dropoff_time is None:
-                continue
-
-            # must not already have a next ride queued
-            if d.pending_pickup:
-                continue
-
-            time_to_dropoff = d.pending_dropoff_time - current_time
-            if time_to_dropoff < 0 or time_to_dropoff > max_hr:
-                continue
-
-            # choose by closeness of future dropoff point to new pickup
-            dist = euclid(d.pending_dropoff_x, d.pending_dropoff_y, rx, ry)
-            if dist < best_dist:
-                best_dist, best_id = dist, did
-
-        return best_id
     
     def find_closest_rider(dx, dy):
         if not waiting_riders: return None
@@ -1082,7 +1083,7 @@ def run_simulation(
                    key=lambda rid: euclid(rider_objects[rid].pickup_x,
                                           rider_objects[rid].pickup_y, dx, dy))
 
-    def match(driver_id, rider_id, t):
+    def match(driver_id, rider_id, t, detour_multiplier, busy_driver_on):
         d = driver_objects[driver_id]
         r = rider_objects[rider_id]
 
@@ -1115,7 +1116,7 @@ def run_simulation(
             # preassign: driver will go to pickup after finishing current ride
             d.pending_pickup = True
             start_x, start_y = d.pending_dropoff_x, d.pending_dropoff_y
-            dist_to_pickup = euclid(start_x, start_y, r.pickup_x, r.pickup_y) * detour_multiplier()
+            dist_to_pickup = euclid(start_x, start_y, r.pickup_x, r.pickup_y) * detour_multiplier(detour_on)
             r.pickup_dist = dist_to_pickup
 
             travel_time = actual_time(mean_time(dist_to_pickup))
@@ -1125,7 +1126,7 @@ def run_simulation(
 
         # baseline: driver is idle now
         d.status = "deadhead" if busy_driver_on else d.status
-        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y) * detour_multiplier()
+        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y) * detour_multiplier(detour_on)
         r.pickup_dist = dist_to_pickup
 
         pickup_time = t + actual_time(mean_time(dist_to_pickup))
@@ -1183,7 +1184,7 @@ def run_simulation(
             push(Event(time=current_time + sample_driver_iat(), kind="driver_arrives"))
             closest_rider = find_closest_rider(x, y)
             if closest_rider is not None:
-                match(did, closest_rider, current_time)
+                match(did, closest_rider, current_time, detour_multiplier, busy_driver_on)
             elif quadrant_centroids is not None:
                 reposition(did, current_time)
 
@@ -1216,7 +1217,7 @@ def run_simulation(
             # Immediately check for waiting riders at new position
             closest_rider = find_closest_rider(d.x, d.y)
             if closest_rider is not None:
-                match(did, closest_rider, current_time)
+                match(did, closest_rider, current_time, detour_multiplier, busy_driver_on)
 
         # ── RIDER REQUEST ─────────────────────────────────────────────────────
         elif event.kind == "rider_request":
@@ -1226,9 +1227,9 @@ def run_simulation(
                                        pickup_x=px, pickup_y=py,
                                        dropoff_x=dx, dropoff_y=dy)
             push(Event(time=current_time + sample_rider_iat(), kind="rider_request"))
-            closest_driver = find_closest_driver(px, py)
+            closest_driver = find_closest_driver(px, py, busy_driver_on)
             if closest_driver is not None:
-                match(closest_driver, rid, current_time)
+                match(closest_driver, rid, current_time, detour_multiplier, busy_driver_on)
             else:
                 waiting_riders.append(rid)
                 cancel_t = current_time + sample_patience()
@@ -1258,9 +1259,15 @@ def run_simulation(
             d.x = r.pickup_x; d.y = r.pickup_y
             if post_burnin:
                 completed_waits.append(current_time - r.request_time)
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)  * detour_multiplier()
-            push(Event(time=current_time + actual_time(mean_time(dist_trip)),
-                       kind="dropoff", rider_id=rid, driver_id=did))
+            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y) * detour_multiplier(detour_on)
+            dropoff_time = current_time + actual_time(mean_time(dist_trip))
+            
+            if busy_driver_on:
+                d.pending_dropoff_time = dropoff_time
+                d.pending_dropoff_x    = r.dropoff_x
+                d.pending_dropoff_y    = r.dropoff_y
+            
+            push(Event(time=dropoff_time, kind="dropoff", rider_id=rid, driver_id=did))
 
         # ── DROPOFF ───────────────────────────────────────────────────────────
         elif event.kind == "dropoff":
@@ -1323,7 +1330,7 @@ def run_simulation(
                 closest_rider = None
 
             if closest_rider is not None:
-                match(did, closest_rider, current_time)
+                match(did, closest_rider, current_time, detour_multiplier, busy_driver_on)
             else:
                 idle_drivers.append(did)
 
@@ -1414,18 +1421,18 @@ quad_cents = compute_quadrant_centroids(riders)
 #  Scenario C — Surge only      : no repositioning, surge at queue >= 10, ×1.5
 #  Scenario D — Both combined   : repositioning + surge
 #
-# Each scenario runs 20 independent replications (1000hr, 5hr burn-in).
+# Each scenario runs 100 independent replications (1000hr, 5hr burn-in).
 # ══════════════════════════════════════════════════════════════════════════════
 
-N_REPS = 20
+N_REPS = 100
 
 scenarios = {
     "A — Baseline"      : dict(quadrant_centroids=None, surge_on=False, detour_on = False, busy_driver_on = False),
     "B — Quadrants"     : dict(quadrant_centroids=quad_cents, surge_on=False, detour_on = False, busy_driver_on = False),
     "C — Surge"         : dict(quadrant_centroids=None, surge_on=True, detour_on = False, busy_driver_on = False),
     "D — Detour"        : dict(quadrant_centroids=None,surge_on=False, detour_on = True, busy_driver_on = False),
-    "E — Busy Driver"   : dict(quadrant_centroids=None,surge_on=False, detour_on = False, busy_driver_on = True, busy_driver_max_minutes = 10.0),
-    "F — B, C, E combined": dict(quadrant_centroids=quad_cents, surge_on=True, detour_on = False, busy_driver_on = True),
+    "E — Busy Driver"   : dict(quadrant_centroids=None,surge_on=False, detour_on = False, busy_driver_on = True, busy_driver_max_minutes = 7.0),
+    "F — B, C, E combined": dict(quadrant_centroids=quad_cents, surge_on=True, detour_on = False, busy_driver_on = True, busy_driver_max_minutes = 7.0),
 }
 
 all_results = {}
@@ -1449,7 +1456,7 @@ for scenario_name, kwargs in scenarios.items():
         rep_es.append(r["earnings_std"])
         rep_surge_rev.append(r["surge_revenue"])
         rep_surge_pct.append(r["surge_ride_pct"])
-        print(f"  Rep {rep+1:2d}/20  abandon={r['abandonment_rate']*100:.1f}%  "
+        print(f"  Rep {rep+1:2d}/100  abandon={r['abandonment_rate']*100:.1f}%  "
               f"wait={r['avg_wait_min']:.1f}min  £{r['avg_earnings_per_hr']:.2f}/hr  "
               f"surge_rev=£{r['surge_revenue']:.0f}")
 
@@ -1482,7 +1489,7 @@ for name, res in all_results.items():
     sr  = res["surge_rev"]
     sp  = res["surge_pct"]
     print(f"  {name:<22}  "
-          f"{ab[0]*100:>5.1f} [{ab[1]*100:.1f},{ab[2]*100:.1f}]  "
+          f"{ab[0]*100:>5.4f} [{ab[1]*100:.4f},{ab[2]*100:.4f}]  "
           f"{wt[0]:>6.2f} [{wt[1]:.2f},{wt[2]:.2f}]  "
           f"{er[0]:>6.2f} [{er[1]:.2f},{er[2]:.2f}]  "
           f"{ut[0]*100:>6.1f}  "
