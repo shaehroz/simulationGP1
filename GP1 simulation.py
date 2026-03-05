@@ -700,6 +700,11 @@ class Driver:
     offline_time:    float | None = None    # scheduled offline time
     busy_since:      float | None = None    # time of last match (for busy time accounting)
     arrival_time:    float | None = None    # time driver came online
+    pending_dropoff_x: float | None = None
+    pending_dropoff_y: float | None = None
+    pending_dropoff_time: float | None = None
+    pending_pickup: bool = False
+    status: str = "idle"
 
 @dataclass
 class Rider:
@@ -935,6 +940,11 @@ def run_simulation(
     quadrant_centroids:   list | None = None,  # list of 4 (x,y) tuples; None = disabled
     # ── Surge pricing ──────────────────────────────────────────────────────
     surge_on:             bool  = True,    # False disables surge entirely
+    # ── Detour ──────────────────────────────────────────────────────
+    detour_on:             bool  = False,    # False disables detour entirely
+    # ── Busy-driver preassignment ─────────────────────────────────────
+    busy_driver_on: bool = False,
+    busy_driver_max_minutes: float = 10.0,
 ) -> dict:
 
     rng        = np.random.default_rng(seed)
@@ -964,10 +974,19 @@ def run_simulation(
         """Returns the (cx, cy) of the quadrant centroid nearest to (x, y)."""
         return min(quadrant_centroids,
                    key=lambda c: euclid(x, y, c[0], c[1]))
+    
+    def detour_multiplier(detour_on = False):
+        if detour_on == False:
+            return 1.0
+        else: 
+            # mean ~1.4, moderate variability; tune as needed
+            m = float(rng.normal(loc=1.4, scale=0.15))
+            return max(1.05, min(m, 2.0))
 
     driver_objects     = {}
     rider_objects      = {}
     idle_drivers       = []
+    busy_drivers = []
     waiting_riders     = []
     next_driver_id     = 0
     next_rider_id      = 0
@@ -995,15 +1014,68 @@ def run_simulation(
                 driver_online_time.get(driver_id, 0.0) + current_time - start)
 
     def find_closest_driver(rx, ry):
-        """Find nearest idle non-repositioning driver. Falls back to repositioning drivers."""
-        available = [did for did in idle_drivers
-                     if not driver_objects[did].repositioning]
-        if not available:
-            available = idle_drivers   # fall back to all idle if all are repositioning
-        if not available: return None
-        return min(available,
-                   key=lambda did: euclid(driver_objects[did].x, driver_objects[did].y, rx, ry))
+        """Baseline if busy_driver_on=False. If True, also consider eligible busy drivers near dropoff."""
 
+        # --- Baseline behaviour (unchanged) ---
+        if not busy_driver_on:
+            available = [did for did in idle_drivers
+                         if not driver_objects[did].repositioning]
+            if not available:
+                available = idle_drivers
+            if not available:
+                return None
+            return min(
+                available,
+                key=lambda did: euclid(driver_objects[did].x, driver_objects[did].y, rx, ry)
+            )
+
+        # --- Busy-driver mode ---
+        # Prefer idle drivers first (same as busy file) :contentReference[oaicite:8]{index=8}
+        if idle_drivers:
+            best_id, best_dist = None, float("inf")
+            for did in idle_drivers:
+                d = driver_objects[did]
+                dist = euclid(d.x, d.y, rx, ry)
+                if dist < best_dist:
+                    best_dist, best_id = dist, did
+            return best_id
+
+        # Otherwise consider busy drivers finishing soon (adapted from busy file) :contentReference[oaicite:9]{index=9}
+        best_id, best_dist = None, float("inf")
+        max_hr = busy_driver_max_minutes / 60.0
+
+        for did in busy_drivers:
+            d = driver_objects.get(did)
+            if d is None:
+                continue
+
+            # must not be about to go offline
+            if d.wants_offline:
+                continue
+
+            # if shift ends before/at current dropoff, don't preassign
+            if d.offline_time is not None and d.pending_dropoff_time is not None and d.offline_time <= d.pending_dropoff_time:
+                continue
+
+            # must be actively in-ride and have a known dropoff time
+            if d.status != "in_ride" or d.pending_dropoff_time is None:
+                continue
+
+            # must not already have a next ride queued
+            if d.pending_pickup:
+                continue
+
+            time_to_dropoff = d.pending_dropoff_time - current_time
+            if time_to_dropoff < 0 or time_to_dropoff > max_hr:
+                continue
+
+            # choose by closeness of future dropoff point to new pickup
+            dist = euclid(d.pending_dropoff_x, d.pending_dropoff_y, rx, ry)
+            if dist < best_dist:
+                best_dist, best_id = dist, did
+
+        return best_id
+    
     def find_closest_rider(dx, dy):
         if not waiting_riders: return None
         return min(waiting_riders,
@@ -1011,24 +1083,53 @@ def run_simulation(
                                           rider_objects[rid].pickup_y, dx, dy))
 
     def match(driver_id, rider_id, t):
-        d = driver_objects[driver_id]; r = rider_objects[rider_id]
-        d.busy          = True
-        d.repositioning = False   # cancel any repositioning — rider takes priority
-        r.status        = "matched"
-        r.driver_id     = driver_id
-        d.busy_since    = t
-        dist_to_pickup  = euclid(d.x, d.y, r.pickup_x, r.pickup_y)
-        r.pickup_dist   = dist_to_pickup
-        if driver_id in idle_drivers:   idle_drivers.remove(driver_id)
-        if rider_id  in waiting_riders: waiting_riders.remove(rider_id)
-        # Lock in surge multiplier at matching time (realistic: price fixed when rider accepts)
+        d = driver_objects[driver_id]
+        r = rider_objects[rider_id]
+
+        d.busy = True
+        d.repositioning = False
+        d.busy_since = t
+
+        r.status = "matched"
+        r.driver_id = driver_id
+
+        # ensure driver is tracked as busy in busy-driver mode
+        if busy_driver_on and (driver_id not in busy_drivers):
+            busy_drivers.append(driver_id)
+
+        # remove from pools
+        if driver_id in idle_drivers:
+            idle_drivers.remove(driver_id)
+        if rider_id in waiting_riders:
+            waiting_riders.remove(rider_id)
+
+        # lock in surge multiplier (keep your existing logic) :contentReference[oaicite:15]{index=15}
         r.surge_mult = compute_surge_multiplier(
             n_waiting=len(waiting_riders),
             n_idle=len(idle_drivers),
             surge_on=surge_on,
         )
-        push(Event(time=t + actual_time(mean_time(dist_to_pickup)),
-                   kind="pickup", rider_id=rider_id, driver_id=driver_id))
+
+        # --- distance & pickup scheduling ---
+        if busy_driver_on and d.pending_dropoff_time is not None:
+            # preassign: driver will go to pickup after finishing current ride
+            d.pending_pickup = True
+            start_x, start_y = d.pending_dropoff_x, d.pending_dropoff_y
+            dist_to_pickup = euclid(start_x, start_y, r.pickup_x, r.pickup_y) * detour_multiplier()
+            r.pickup_dist = dist_to_pickup
+
+            travel_time = actual_time(mean_time(dist_to_pickup))
+            pickup_time = d.pending_dropoff_time + travel_time
+            push(Event(time=pickup_time, kind="pickup", rider_id=rider_id, driver_id=driver_id))
+            return
+
+        # baseline: driver is idle now
+        d.status = "deadhead" if busy_driver_on else d.status
+        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y) * detour_multiplier()
+        r.pickup_dist = dist_to_pickup
+
+        pickup_time = t + actual_time(mean_time(dist_to_pickup))
+        push(Event(time=pickup_time, kind="pickup", rider_id=rider_id, driver_id=driver_id))
 
     def reposition(driver_id, current_time):
         """
@@ -1151,48 +1252,101 @@ def run_simulation(
             if rid not in rider_objects: continue
             r = rider_objects[rid]; d = driver_objects[did]
             r.status = "in_ride"
+            if busy_driver_on:
+                d.status = "in_ride"
+                d.pending_pickup = False
             d.x = r.pickup_x; d.y = r.pickup_y
             if post_burnin:
                 completed_waits.append(current_time - r.request_time)
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
+            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)  * detour_multiplier()
             push(Event(time=current_time + actual_time(mean_time(dist_trip)),
                        kind="dropoff", rider_id=rid, driver_id=did))
 
         # ── DROPOFF ───────────────────────────────────────────────────────────
         elif event.kind == "dropoff":
-            rid = event.rider_id; did = event.driver_id
-            if rid not in rider_objects: continue
-            r = rider_objects[rid]; d = driver_objects[did]
-            dist_trip   = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
-            total_miles = r.pickup_dist + dist_trip
-            # Use surge multiplier locked in at matching time
-            effective_multiplier = getattr(r, 'surge_mult', 1.0)
-            base_fare   = fare_base + fare_per_mile * dist_trip
-            fare        = base_fare * effective_multiplier
-            cost        = cost_per_mile * total_miles
-            d.x = r.dropoff_x; d.y = r.dropoff_y
-            if post_burnin:
-                driver_earnings[did]  = driver_earnings.get(did, 0.0) + fare - cost
-                driver_busy_time[did] = driver_busy_time.get(did, 0.0) + (
-                    current_time - d.busy_since)
-                completed_count += 1
-                if effective_multiplier > 1.0:
-                    surge_revenue    += fare - base_fare
-                    surge_ride_count += 1
-            r.status = "completed"
-            del rider_objects[rid]
-            d.busy = False
-            if d.wants_offline:
-                record_online_time(did, current_time)
-                del driver_objects[did]
+            rider_id = event.rider_id
+            driver_id = event.driver_id
+
+            if driver_id not in driver_objects:
                 continue
-            closest_rider = find_closest_rider(d.x, d.y)
-            if closest_rider is not None:
-                match(did, closest_rider, current_time)
+            if rider_id not in rider_objects:
+                continue
+            
+            d = driver_objects[driver_id]
+            r = rider_objects[rider_id]
+
+            # Trip distance (keep your current distance model; if you use detour, apply it here too)
+            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
+            total_miles = r.pickup_dist + dist_trip
+
+            fare = fare_base + fare_per_mile * dist_trip
+            cost = cost_per_mile * total_miles
+
+            # move driver to dropoff location
+            d.x = r.dropoff_x
+            d.y = r.dropoff_y
+
+            # earnings (after burn-in)
+            if post_burnin:
+                driver_earnings[driver_id] = driver_earnings.get(driver_id, 0.0) + (fare - cost)
+
+            # busy time accounting: count from d.busy_since to now, if defined
+            if d.busy_since is not None:
+                driver_busy_time[driver_id] = driver_busy_time.get(driver_id, 0.0) + (current_time - d.busy_since)
             else:
-                idle_drivers.append(did)
-                if quadrant_centroids is not None:
-                    reposition(did, current_time)
+                driver_busy_time[driver_id] = driver_busy_time.get(driver_id, 0.0)
+
+            # completed ride count (after burn-in)
+            if post_burnin:
+                completed_count += 1
+
+            # rider is done
+            del rider_objects[rider_id]
+
+            # --- BUSY DRIVER MODE: update "pending dropoff" state ---
+            if busy_driver_on:
+                # This dropoff is now complete, so the "pending dropoff" info is no longer valid
+                d.pending_dropoff_x = None
+                d.pending_dropoff_y = None
+                d.pending_dropoff_time = None
+
+            # Default: driver is no longer busy unless they already have a queued next pickup
+            # (If you never set pending_pickup in your implementation, this behaves like baseline.)
+            if busy_driver_on and getattr(d, "pending_pickup", False):
+                # Driver stays busy, now deadheading to their already-scheduled next pickup.
+                d.busy = True
+                d.status = "deadhead"
+                # Start a new busy interval for the deadhead leg to next pickup
+                d.busy_since = current_time
+
+                # Keep them in busy_drivers; ensure not in idle pool
+                if driver_id in idle_drivers:
+                    idle_drivers.remove(driver_id)
+                if driver_id not in busy_drivers:
+                    busy_drivers.append(driver_id)
+
+            else:
+                # Truly idle (baseline behaviour)
+                d.busy = False
+                d.busy_since = None
+                if busy_driver_on:
+                    d.status = "idle"
+                    d.pending_pickup = False  # safe reset
+
+                # remove from busy pool if you're tracking it
+                if busy_driver_on and driver_id in busy_drivers:
+                    busy_drivers.remove(driver_id)
+
+                if d.wants_offline:
+                    record_online_time(driver_id, current_time)
+                    del driver_objects[driver_id]
+                else:
+                    next_rid = find_closest_rider(d.x, d.y)
+                    if next_rid is not None:
+                        match(driver_id, next_rid, current_time)
+                    else:
+                        if driver_id not in idle_drivers:
+                            idle_drivers.append(driver_id)
 
     # Cleanup: record online time for drivers still active at T_end
     for did, d in list(driver_objects.items()):
@@ -1271,10 +1425,12 @@ quad_cents = compute_quadrant_centroids(riders)
 N_REPS = 20
 
 scenarios = {
-    "A — Baseline"      : dict(quadrant_centroids=None,       surge_on=False),
-    "B — Quadrants"     : dict(quadrant_centroids=quad_cents, surge_on=False),
-    "C — Surge"         : dict(quadrant_centroids=None,       surge_on=True),
-    "D — Both combined" : dict(quadrant_centroids=quad_cents, surge_on=True),
+    "A — Baseline"      : dict(quadrant_centroids=None, surge_on=False, detour_on = False, busy_driver_on = False),
+    "B — Quadrants"     : dict(quadrant_centroids=quad_cents, surge_on=False, detour_on = False, busy_driver_on = False),
+    "C — Surge"         : dict(quadrant_centroids=None, surge_on=True, detour_on = False, busy_driver_on = False),
+    "D — Detour"        : dict(quadrant_centroids=None,surge_on=False, detour_on = True, busy_driver_on = False),
+    "E — Busy Driver"   : dict(quadrant_centroids=None,surge_on=False, detour_on = False, busy_driver_on = True, busy_driver_max_minutes = 10.0),
+    "F — B, C, E combined": dict(quadrant_centroids=quad_cents, surge_on=True, detour_on = False, busy_driver_on = True),
 }
 
 all_results = {}
