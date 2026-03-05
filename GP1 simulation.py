@@ -1264,89 +1264,84 @@ def run_simulation(
 
         # ── DROPOFF ───────────────────────────────────────────────────────────
         elif event.kind == "dropoff":
-            rider_id = event.rider_id
-            driver_id = event.driver_id
+            rid = event.rider_id; did = event.driver_id
+            if rid not in rider_objects: continue
+            r = rider_objects[rid]; d = driver_objects[did]
 
-            if driver_id not in driver_objects:
-                continue
-            if rider_id not in rider_objects:
-                continue
-            
-            d = driver_objects[driver_id]
-            r = rider_objects[rider_id]
-
-            # Trip distance (keep your current distance model; if you use detour, apply it here too)
-            dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
-            total_miles = r.pickup_dist + dist_trip
-
-            fare = fare_base + fare_per_mile * dist_trip
-            cost = cost_per_mile * total_miles
-
-            # move driver to dropoff location
-            d.x = r.dropoff_x
-            d.y = r.dropoff_y
-
-            # earnings (after burn-in)
-            if post_burnin:
-                driver_earnings[driver_id] = driver_earnings.get(driver_id, 0.0) + (fare - cost)
-
-            # busy time accounting: count from d.busy_since to now, if defined
-            if d.busy_since is not None:
-                driver_busy_time[driver_id] = driver_busy_time.get(driver_id, 0.0) + (current_time - d.busy_since)
-            else:
-                driver_busy_time[driver_id] = driver_busy_time.get(driver_id, 0.0)
-
-            # completed ride count (after burn-in)
-            if post_burnin:
-                completed_count += 1
-
-            # rider is done
-            del rider_objects[rider_id]
-
-            # --- BUSY DRIVER MODE: update "pending dropoff" state ---
-            if busy_driver_on:
-                # This dropoff is now complete, so the "pending dropoff" info is no longer valid
-                d.pending_dropoff_x = None
-                d.pending_dropoff_y = None
-                d.pending_dropoff_time = None
-
-            # Default: driver is no longer busy unless they already have a queued next pickup
-            # (If you never set pending_pickup in your implementation, this behaves like baseline.)
-            if busy_driver_on and getattr(d, "pending_pickup", False):
-                # Driver stays busy, now deadheading to their already-scheduled next pickup.
-                d.busy = True
-                d.status = "deadhead"
-                # Start a new busy interval for the deadhead leg to next pickup
+            if getattr(d, "busy_since", None) is None:
                 d.busy_since = current_time
 
-                # Keep them in busy_drivers; ensure not in idle pool
-                if driver_id in idle_drivers:
-                    idle_drivers.remove(driver_id)
-                if driver_id not in busy_drivers:
-                    busy_drivers.append(driver_id)
+            dist_trip   = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
+            total_miles = r.pickup_dist + dist_trip
+            # Use surge multiplier locked in at matching time
+            effective_multiplier = getattr(r, 'surge_mult', 1.0)
+            base_fare   = fare_base + fare_per_mile * dist_trip
+            fare        = base_fare * effective_multiplier
+            cost        = cost_per_mile * total_miles
+            d.x = r.dropoff_x; d.y = r.dropoff_y
 
-            else:
-                # Truly idle (baseline behaviour)
-                d.busy = False
-                d.busy_since = None
-                if busy_driver_on:
-                    d.status = "idle"
-                    d.pending_pickup = False  # safe reset
+            if post_burnin:
+                driver_earnings[did]  = driver_earnings.get(did, 0.0) + fare - cost
+                driver_busy_time[did] = driver_busy_time.get(did, 0.0) + (
+                    current_time - d.busy_since)
+                completed_count += 1
+                if effective_multiplier > 1.0:
+                    surge_revenue    += fare - base_fare
+                    surge_ride_count += 1
 
-                # remove from busy pool if you're tracking it
-                if busy_driver_on and driver_id in busy_drivers:
-                    busy_drivers.remove(driver_id)
+            r.status = "completed"
+            del rider_objects[rid]
 
-                if d.wants_offline:
-                    record_online_time(driver_id, current_time)
-                    del driver_objects[driver_id]
+            if busy_driver_on:
+                # this ride’s dropoff is now complete; clear any "pending dropoff" info
+                if hasattr(d, "pending_dropoff_time"): d.pending_dropoff_time = None
+                if hasattr(d, "pending_dropoff_x"):    d.pending_dropoff_x = None
+                if hasattr(d, "pending_dropoff_y"):    d.pending_dropoff_y = None
+
+            d.busy = False
+
+            if busy_driver_on and getattr(d, "pending_pickup", False):
+                d.busy = True
+                d.status = "deadhead"
+                d.busy_since = current_time  # start new busy interval for deadhead-to-next-pickup
+                # ensure they are tracked as busy
+                if did not in busy_drivers:
+                    busy_drivers.append(did)
+
+            if d.wants_offline:
+                if busy_driver_on and getattr(d, "pending_pickup", False):
+                    # override offline request until chain finishes
+                    d.wants_offline = False
                 else:
-                    next_rid = find_closest_rider(d.x, d.y)
-                    if next_rid is not None:
-                        match(driver_id, next_rid, current_time)
-                    else:
-                        if driver_id not in idle_drivers:
-                            idle_drivers.append(driver_id)
+                    record_online_time(did, current_time)
+                    del driver_objects[did]
+                    continue
+                
+            closest_rider = find_closest_rider(d.x, d.y)
+
+            if busy_driver_on and getattr(d, "pending_pickup", False):
+                closest_rider = None
+
+            if closest_rider is not None:
+                match(did, closest_rider, current_time)
+            else:
+                idle_drivers.append(did)
+
+                if busy_driver_on and getattr(d, "pending_pickup", False):
+                    # they are deadheading to a preassigned pickup, so they should not be idle
+                    if did in idle_drivers:
+                        idle_drivers.remove(did)
+
+                if busy_driver_on and (not getattr(d, "pending_pickup", False)):
+                    if did in busy_drivers:
+                        busy_drivers.remove(did)
+                    d.status = "idle"
+                    d.busy = False
+                    d.busy_since = None
+
+                if quadrant_centroids is not None:
+                    if (not busy_driver_on) or (not getattr(d, "pending_pickup", False)):
+                        reposition(did, current_time)
 
     # Cleanup: record online time for drivers still active at T_end
     for did, d in list(driver_objects.items()):
