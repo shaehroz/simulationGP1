@@ -936,22 +936,33 @@ def run_simulation(
     cost_per_mile:        float = 0.20,    # £0.20/mile on ALL miles (deadhead + trip)
     burn_in:              float = 5.0,     # hours before metrics are recorded
     trip_pool:            np.ndarray | None = None,
+    # ── Driver shift duration bounds ───────────────────────────────────────
+    dur_min:              float = 6.0,     # MLE lower bound (brief: 5.0)
+    dur_max:              float = 8.0,     # MLE upper bound (brief: 8.0)
     # ── Quadrant repositioning ─────────────────────────────────────────────
     quadrant_centroids:   list | None = None,  # list of 4 (x,y) tuples; None = disabled
     # ── Surge pricing ──────────────────────────────────────────────────────
     surge_on:             bool  = True,    # False disables surge entirely
+<<<<<<< HEAD
     # ── Detour ──────────────────────────────────────────────────────
     detour_on:             bool  = True,    # False disables detour entirely
     # ── Busy-driver preassignment ─────────────────────────────────────
     busy_driver_on: bool = True,
     busy_driver_max_minutes: float = 10.0,
+=======
+    # ── Detour index ───────────────────────────────────────────────────────
+    detour_on:            bool  = False,   # True scales distances by ~N(1.4, 0.15)
+    # ── Busy-driver preassignment ─────────────────────────────────────────
+    busy_driver_on:       bool  = False,
+    busy_driver_max_minutes: float = 7.0,
+>>>>>>> 7b7a2df (added baseline code + other)
 ) -> dict:
 
     rng        = np.random.default_rng(seed)
     pool_index = [0]
 
     def sample_trip():
-        """Returns (px, py, dx, dy) from KDE pool, or uniform fallback if pool exhausted."""
+        """Returns (px, py, dx, dy) from BVN pool, or uniform fallback if pool exhausted."""
         if trip_pool is not None and pool_index[0] < len(trip_pool):
             row = trip_pool[pool_index[0]]
             pool_index[0] += 1
@@ -963,7 +974,7 @@ def run_simulation(
         return px, py, dx, dy
 
     def sample_driver_iat():     return float(rng.exponential(scale=1 / lam_driver_on))
-    def sample_driver_dur():     return float(rng.uniform(6.0, 8.0))
+    def sample_driver_dur():     return float(rng.uniform(dur_min, dur_max))
     def sample_rider_iat():      return float(rng.exponential(scale=1 / lam_rider_arrival))
     def sample_patience():       return float(rng.exponential(scale=1 / lam_patience))
     def euclid(x1, y1, x2, y2): return float(np.sqrt((x2 - x1)**2 + (y2 - y1)**2))
@@ -971,6 +982,7 @@ def run_simulation(
     def actual_time(mu):         return float(rng.uniform(0.8 * mu, 1.2 * mu))
 
     def nearest_quadrant_centroid(x, y):
+<<<<<<< HEAD
         """Returns the (cx, cy) of the quadrant centroid nearest to (x, y)."""
         return min(quadrant_centroids,
                    key=lambda c: euclid(x, y, c[0], c[1]))
@@ -982,19 +994,32 @@ def run_simulation(
             return max(1.05, min(m, 2.0))
         else: 
             return 1.0
+=======
+        return min(quadrant_centroids, key=lambda c: euclid(x, y, c[0], c[1]))
+
+    def get_detour():
+        if not detour_on:
+            return 1.0
+        m = float(rng.normal(loc=1.4, scale=0.15))
+        return max(1.05, min(m, 2.0))
+>>>>>>> 7b7a2df (added baseline code + other)
 
     driver_objects     = {}
     rider_objects      = {}
     idle_drivers       = []
+<<<<<<< HEAD
     busy_drivers = []
+=======
+    busy_drivers       = []
+>>>>>>> 7b7a2df (added baseline code + other)
     waiting_riders     = []
     next_driver_id     = 0
     next_rider_id      = 0
     completed_waits    = []
     abandoned_count    = 0
     completed_count    = 0
-    surge_revenue      = 0.0   # total extra revenue collected during surge periods
-    surge_ride_count   = 0     # number of rides completed at surge price
+    surge_revenue      = 0.0
+    surge_ride_count   = 0
     driver_earnings    = {}
     driver_busy_time   = {}
     driver_online_time = {}
@@ -1013,8 +1038,44 @@ def run_simulation(
             driver_online_time[driver_id] = (
                 driver_online_time.get(driver_id, 0.0) + current_time - start)
 
+<<<<<<< HEAD
     def find_closest_driver(rx, ry, busy_driver_on):
         """Baseline if busy_driver_on=False. If True, also consider eligible busy drivers near dropoff."""
+=======
+    def find_closest_driver(rx, ry):
+        if not busy_driver_on:
+            available = [did for did in idle_drivers
+                         if not driver_objects[did].repositioning]
+            if not available:
+                available = idle_drivers
+            if not available:
+                return None
+            return min(available,
+                       key=lambda did: euclid(driver_objects[did].x,
+                                              driver_objects[did].y, rx, ry))
+        # busy-driver mode: prefer idle first
+        if idle_drivers:
+            return min(idle_drivers,
+                       key=lambda did: euclid(driver_objects[did].x,
+                                              driver_objects[did].y, rx, ry))
+        # then eligible busy drivers finishing within window
+        best_id, best_dist = None, float("inf")
+        max_hr = busy_driver_max_minutes / 60.0
+        for did in busy_drivers:
+            d = driver_objects.get(did)
+            if d is None: continue
+            if d.wants_offline: continue
+            if (d.offline_time is not None and d.pending_dropoff_time is not None
+                    and d.offline_time <= d.pending_dropoff_time): continue
+            if d.status != "in_ride" or d.pending_dropoff_time is None: continue
+            if d.pending_pickup: continue
+            time_to_dropoff = d.pending_dropoff_time - current_time
+            if time_to_dropoff < 0 or time_to_dropoff > max_hr: continue
+            dist = euclid(d.pending_dropoff_x, d.pending_dropoff_y, rx, ry)
+            if dist < best_dist:
+                best_dist, best_id = dist, did
+        return best_id
+>>>>>>> 7b7a2df (added baseline code + other)
 
         # --- Baseline behaviour (unchanged) ---
         if not busy_driver_on:
@@ -1083,6 +1144,7 @@ def run_simulation(
                    key=lambda rid: euclid(rider_objects[rid].pickup_x,
                                           rider_objects[rid].pickup_y, dx, dy))
 
+<<<<<<< HEAD
     def match(driver_id, rider_id, t, detour_multiplier, busy_driver_on):
         d = driver_objects[driver_id]
         r = rider_objects[rider_id]
@@ -1131,31 +1193,43 @@ def run_simulation(
 
         pickup_time = t + actual_time(mean_time(dist_to_pickup))
         push(Event(time=pickup_time, kind="pickup", rider_id=rider_id, driver_id=driver_id))
+=======
+    def match(driver_id, rider_id, t):
+        d = driver_objects[driver_id]; r = rider_objects[rider_id]
+        d.busy = True; d.repositioning = False; d.busy_since = t
+        r.status = "matched"; r.driver_id = driver_id
+        if busy_driver_on and driver_id not in busy_drivers:
+            busy_drivers.append(driver_id)
+        if driver_id in idle_drivers:   idle_drivers.remove(driver_id)
+        if rider_id  in waiting_riders: waiting_riders.remove(rider_id)
+        r.surge_mult = compute_surge_multiplier(
+            n_waiting=len(waiting_riders), n_idle=len(idle_drivers), surge_on=surge_on)
+        # preassigned busy driver
+        if busy_driver_on and d.pending_dropoff_time is not None:
+            d.pending_pickup = True
+            start_x, start_y = d.pending_dropoff_x, d.pending_dropoff_y
+            dist_to_pickup = euclid(start_x, start_y, r.pickup_x, r.pickup_y) * get_detour()
+            r.pickup_dist  = dist_to_pickup
+            pickup_time    = d.pending_dropoff_time + actual_time(mean_time(dist_to_pickup))
+            push(Event(time=pickup_time, kind="pickup", rider_id=rider_id, driver_id=driver_id))
+            return
+        # idle driver
+        dist_to_pickup = euclid(d.x, d.y, r.pickup_x, r.pickup_y) * get_detour()
+        r.pickup_dist  = dist_to_pickup
+        push(Event(time=t + actual_time(mean_time(dist_to_pickup)),
+                   kind="pickup", rider_id=rider_id, driver_id=driver_id))
+>>>>>>> 7b7a2df (added baseline code + other)
 
     def reposition(driver_id, current_time):
-        """
-        Sends an idle driver to the centroid of their nearest high-demand quadrant.
-        Repositioning costs fuel but earns no fare. The driver remains in idle_drivers
-        so they can still be matched to a rider — if matched, the reposition_arrive
-        event is simply ignored (driver no longer exists in driver_objects or has
-        repositioning=False).
-        """
-        d  = driver_objects[driver_id]
+        d = driver_objects[driver_id]
         cx, cy = nearest_quadrant_centroid(d.x, d.y)
         dist   = euclid(d.x, d.y, cx, cy)
-        if dist < 0.01:
-            return   # already at centroid — no need to move
+        if dist < 0.01: return
         d.repositioning = True
-        travel_t = actual_time(mean_time(dist))
-        # Repositioning fuel cost charged at dropoff-equivalent point
         repo_cost = cost_per_mile * dist
-        push(Event(time=current_time + travel_t,
-                   kind="reposition_arrive",
-                   driver_id=driver_id))
-        # Store destination on driver object for fuel accounting
-        d.repo_dest_x  = cx
-        d.repo_dest_y  = cy
-        d.repo_cost    = repo_cost
+        push(Event(time=current_time + actual_time(mean_time(dist)),
+                   kind="reposition_arrive", driver_id=driver_id))
+        d.repo_dest_x = cx; d.repo_dest_y = cy; d.repo_cost = repo_cost
 
     current_time = 0.0
 
@@ -1172,15 +1246,14 @@ def run_simulation(
             y   = float(rng.uniform(square_min, square_max))
             driver_objects[did] = Driver(id=did, x=x, y=y, online=True,
                                          arrival_time=current_time,
-                                         wants_offline=False,
-                                         repositioning=False)
+                                         wants_offline=False, repositioning=False)
             idle_drivers.append(did)
             driver_earnings[did]    = 0.0
             driver_busy_time[did]   = 0.0
             driver_online_time[did] = 0.0
             off_t = current_time + sample_driver_dur()
             driver_objects[did].offline_time = off_t
-            push(Event(time=off_t,                           kind="driver_offline", driver_id=did))
+            push(Event(time=off_t, kind="driver_offline", driver_id=did))
             push(Event(time=current_time + sample_driver_iat(), kind="driver_arrives"))
             closest_rider = find_closest_rider(x, y)
             if closest_rider is not None:
@@ -1194,7 +1267,7 @@ def run_simulation(
             if did not in driver_objects: continue
             d = driver_objects[did]
             if d.busy:
-                d.wants_offline = True          # finish current ride first
+                d.wants_offline = True
             else:
                 if did in idle_drivers: idle_drivers.remove(did)
                 record_online_time(did, current_time)
@@ -1205,16 +1278,10 @@ def run_simulation(
             did = event.driver_id
             if did not in driver_objects: continue
             d = driver_objects[did]
-            if not d.repositioning:
-                continue   # was matched to a rider before arriving — nothing to do
-            # Driver reaches quadrant centroid
-            d.x             = d.repo_dest_x
-            d.y             = d.repo_dest_y
-            d.repositioning = False
-            # Charge repositioning fuel cost to driver earnings
+            if not d.repositioning: continue
+            d.x = d.repo_dest_x; d.y = d.repo_dest_y; d.repositioning = False
             if post_burnin:
                 driver_earnings[did] = driver_earnings.get(did, 0.0) - d.repo_cost
-            # Immediately check for waiting riders at new position
             closest_rider = find_closest_rider(d.x, d.y)
             if closest_rider is not None:
                 match(did, closest_rider, current_time, detour_multiplier, busy_driver_on)
@@ -1254,6 +1321,7 @@ def run_simulation(
             r = rider_objects[rid]; d = driver_objects[did]
             r.status = "in_ride"
             if busy_driver_on:
+<<<<<<< HEAD
                 d.status = "in_ride"
                 d.pending_pickup = False
             d.x = r.pickup_x; d.y = r.pickup_y
@@ -1262,11 +1330,22 @@ def run_simulation(
             dist_trip = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y) * detour_multiplier(detour_on)
             dropoff_time = current_time + actual_time(mean_time(dist_trip))
             
+=======
+                d.status = "in_ride"; d.pending_pickup = False
+            d.x = r.pickup_x; d.y = r.pickup_y
+            if post_burnin:
+                completed_waits.append(current_time - r.request_time)
+            dist_trip    = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y) * get_detour()
+            dropoff_time = current_time + actual_time(mean_time(dist_trip))
+>>>>>>> 7b7a2df (added baseline code + other)
             if busy_driver_on:
                 d.pending_dropoff_time = dropoff_time
                 d.pending_dropoff_x    = r.dropoff_x
                 d.pending_dropoff_y    = r.dropoff_y
+<<<<<<< HEAD
             
+=======
+>>>>>>> 7b7a2df (added baseline code + other)
             push(Event(time=dropoff_time, kind="dropoff", rider_id=rid, driver_id=did))
 
         # ── DROPOFF ───────────────────────────────────────────────────────────
@@ -1274,14 +1353,18 @@ def run_simulation(
             rid = event.rider_id; did = event.driver_id
             if rid not in rider_objects: continue
             r = rider_objects[rid]; d = driver_objects[did]
+<<<<<<< HEAD
 
             if getattr(d, "busy_since", None) is None:
                 d.busy_since = current_time
 
+=======
+            if getattr(d, "busy_since", None) is None:
+                d.busy_since = current_time
+>>>>>>> 7b7a2df (added baseline code + other)
             dist_trip   = euclid(r.pickup_x, r.pickup_y, r.dropoff_x, r.dropoff_y)
             total_miles = r.pickup_dist + dist_trip
-            # Use surge multiplier locked in at matching time
-            effective_multiplier = getattr(r, 'surge_mult', 1.0)
+            effective_multiplier = getattr(r, "surge_mult", 1.0)
             base_fare   = fare_base + fare_per_mile * dist_trip
             fare        = base_fare * effective_multiplier
             cost        = cost_per_mile * total_miles
@@ -1298,6 +1381,7 @@ def run_simulation(
 
             r.status = "completed"
             del rider_objects[rid]
+<<<<<<< HEAD
 
             if busy_driver_on:
                 # this ride’s dropoff is now complete; clear any "pending dropoff" info
@@ -1318,21 +1402,40 @@ def run_simulation(
             if d.wants_offline:
                 if busy_driver_on and getattr(d, "pending_pickup", False):
                     # override offline request until chain finishes
+=======
+            if busy_driver_on:
+                d.pending_dropoff_time = None
+                d.pending_dropoff_x    = None
+                d.pending_dropoff_y    = None
+            d.busy = False
+            if busy_driver_on and getattr(d, "pending_pickup", False):
+                d.busy = True; d.status = "deadhead"; d.busy_since = current_time
+                if did not in busy_drivers: busy_drivers.append(did)
+            if d.wants_offline:
+                if busy_driver_on and getattr(d, "pending_pickup", False):
+>>>>>>> 7b7a2df (added baseline code + other)
                     d.wants_offline = False
                 else:
                     record_online_time(did, current_time)
                     del driver_objects[did]
                     continue
+<<<<<<< HEAD
                 
             closest_rider = find_closest_rider(d.x, d.y)
 
             if busy_driver_on and getattr(d, "pending_pickup", False):
                 closest_rider = None
 
+=======
+            closest_rider = find_closest_rider(d.x, d.y)
+            if busy_driver_on and getattr(d, "pending_pickup", False):
+                closest_rider = None
+>>>>>>> 7b7a2df (added baseline code + other)
             if closest_rider is not None:
                 match(did, closest_rider, current_time, detour_multiplier, busy_driver_on)
             else:
                 idle_drivers.append(did)
+<<<<<<< HEAD
 
                 if busy_driver_on and getattr(d, "pending_pickup", False):
                     # they are deadheading to a preassigned pickup, so they should not be idle
@@ -1348,9 +1451,18 @@ def run_simulation(
 
                 if quadrant_centroids is not None:
                     if (not busy_driver_on) or (not getattr(d, "pending_pickup", False)):
+=======
+                if busy_driver_on and getattr(d, "pending_pickup", False):
+                    if did in idle_drivers: idle_drivers.remove(did)
+                if busy_driver_on and not getattr(d, "pending_pickup", False):
+                    if did in busy_drivers: busy_drivers.remove(did)
+                    d.status = "idle"; d.busy = False; d.busy_since = None
+                if quadrant_centroids is not None:
+                    if not busy_driver_on or not getattr(d, "pending_pickup", False):
+>>>>>>> 7b7a2df (added baseline code + other)
                         reposition(did, current_time)
 
-    # Cleanup: record online time for drivers still active at T_end
+    # Cleanup
     for did, d in list(driver_objects.items()):
         start = max(d.arrival_time, burn_in)
         if T_end > start:
@@ -1414,18 +1526,34 @@ bvn_params = fit_truncated_bvn(riders)
 quad_cents = compute_quadrant_centroids(riders)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 10 — FOUR-SCENARIO COMPARISON
+# SECTION 10 — SCENARIO COMPARISON
 #
-#  Scenario A — Baseline        : no quadrant repositioning, no surge
-#  Scenario B — Quadrants only  : repositioning enabled, no surge
-#  Scenario C — Surge only      : no repositioning, surge at queue >= 10, ×1.5
-#  Scenario D — Both combined   : repositioning + surge
+# TWO GROUPS:
 #
+<<<<<<< HEAD
 # Each scenario runs 100 independent replications (1000hr, 5hr burn-in).
+=======
+# GROUP 0 — BRIEF BASELINE  (mark scheme criterion 1)
+#   Scenario 0: EXACTLY the parameters given in the project brief —
+#     Rider IAT  Exp(30/hr), Driver IAT Exp(3/hr), Driver dur U(5,8),
+#     Locations  Uniform(0,20), Patience Exp(5/hr), no improvements.
+#
+# GROUP 1 — DATA-CALIBRATED SCENARIOS  (mark scheme criterion 2+)
+#   All use MLE rates, U(6,8) durations, BVN spatial model.
+#   A — Calibrated baseline  : no improvements
+#   B — Standby locations    : quadrant repositioning
+#   C — Surge pricing        : exponential surge multiplier
+#   D — Detour index         : road-network distance scaling ~N(1.4,0.15)
+#   E — Dynamic assignment   : busy-driver preassignment (7-min window)
+#   F — B+C+E combined       : standby + surge + dynamic assignment
+#
+# Each scenario: 100 replications, 1000hr horizon, 5hr burn-in.
+>>>>>>> 7b7a2df (added baseline code + other)
 # ══════════════════════════════════════════════════════════════════════════════
 
 N_REPS = 100
 
+<<<<<<< HEAD
 scenarios = {
     "A — Baseline"      : dict(quadrant_centroids=None, surge_on=False, detour_on = False, busy_driver_on = False),
     "B — Quadrants"     : dict(quadrant_centroids=quad_cents, surge_on=False, detour_on = False, busy_driver_on = False),
@@ -1438,17 +1566,22 @@ scenarios = {
 all_results = {}
 
 for scenario_name, kwargs in scenarios.items():
+=======
+def run_scenario_batch(scenario_name, sim_kwargs, pool_params=None, n_reps=N_REPS):
+    """
+    Run n_reps replications and return a dict of confidence intervals.
+    pool_params=None  → trip_pool=None → simulation uses Uniform(0,20) fallback.
+    pool_params=dict  → BVN pool built fresh each rep.
+    """
+>>>>>>> 7b7a2df (added baseline code + other)
     print(f"\n{'═'*65}")
     print(f"  SCENARIO {scenario_name}")
     print(f"{'═'*65}")
-
     rep_ab, rep_wt, rep_er, rep_ut, rep_es = [], [], [], [], []
     rep_surge_rev, rep_surge_pct           = [], []
-
-    for rep in range(N_REPS):
-        pool = build_trip_pool(bvn_params, n=50000, seed=rep)
-        r    = run_simulation(T_end=1000, seed=rep, burn_in=5.0,
-                              trip_pool=pool, **kwargs)
+    for rep in range(n_reps):
+        pool = build_trip_pool(pool_params, n=50000, seed=rep) if pool_params is not None else None
+        r    = run_simulation(T_end=1000, seed=rep, burn_in=5.0, trip_pool=pool, **sim_kwargs)
         rep_ab.append(r["abandonment_rate"])
         rep_wt.append(r["avg_wait_min"])
         rep_er.append(r["avg_earnings_per_hr"])
@@ -1456,11 +1589,18 @@ for scenario_name, kwargs in scenarios.items():
         rep_es.append(r["earnings_std"])
         rep_surge_rev.append(r["surge_revenue"])
         rep_surge_pct.append(r["surge_ride_pct"])
+<<<<<<< HEAD
         print(f"  Rep {rep+1:2d}/100  abandon={r['abandonment_rate']*100:.1f}%  "
               f"wait={r['avg_wait_min']:.1f}min  £{r['avg_earnings_per_hr']:.2f}/hr  "
               f"surge_rev=£{r['surge_revenue']:.0f}")
 
     all_results[scenario_name] = {
+=======
+        print(f"  Rep {rep+1:3d}/{n_reps}  abandon={r['abandonment_rate']*100:.1f}%  "
+              f"wait={r['avg_wait_min']:.1f}min  \xa3{r['avg_earnings_per_hr']:.2f}/hr  "
+              f"surge_rev=\xa3{r['surge_revenue']:.0f}")
+    return {
+>>>>>>> 7b7a2df (added baseline code + other)
         "abandonment" : confidence_interval(rep_ab),
         "wait"        : confidence_interval(rep_wt),
         "earnings"    : confidence_interval(rep_er),
@@ -1470,16 +1610,62 @@ for scenario_name, kwargs in scenarios.items():
         "surge_pct"   : confidence_interval(rep_surge_pct),
     }
 
+
+# ── GROUP 0: Brief baseline ───────────────────────────────────────────────────
+print("\n" + "═"*65)
+print("  GROUP 0 — BRIEF BASELINE  (mark scheme criterion 1)")
+print("  Exp(30/hr) riders | Exp(3/hr) drivers | U(5,8) shifts")
+print("  Uniform(0,20) locations | Exp(5/hr) patience | no improvements")
+print("═"*65)
+
+brief_results = {}
+brief_results["0 — Brief baseline"] = run_scenario_batch(
+    "0 — Brief baseline",
+    sim_kwargs = dict(
+        lam_rider_arrival  = 30.0,   # brief: 30/hr
+        lam_driver_on      = 3.0,    # brief: 3/hr
+        dur_min            = 5.0,    # brief: U(5,8)
+        dur_max            = 8.0,
+        quadrant_centroids = None,
+        surge_on           = False,
+        detour_on          = False,
+        busy_driver_on     = False,
+    ),
+    pool_params = None,              # Uniform(0,20) locations — no BVN pool
+)
+
+
+# ── GROUP 1: Data-calibrated scenarios ────────────────────────────────────────
+print("\n" + "═"*65)
+print("  GROUP 1 — DATA-CALIBRATED SCENARIOS  (mark scheme criterion 2+)")
+print("  Exp(34.92/hr) riders | Exp(4.65/hr) drivers | U(6,8) shifts")
+print("  Truncated BVN locations | Exp(5/hr) patience")
+print("═"*65)
+
+calibrated_scenarios = {
+    "A — Calibrated baseline" : dict(quadrant_centroids=None,       surge_on=False, detour_on=False, busy_driver_on=False),
+    "B — Standby locations"   : dict(quadrant_centroids=quad_cents, surge_on=False, detour_on=False, busy_driver_on=False),
+    "C — Surge pricing"       : dict(quadrant_centroids=None,       surge_on=True,  detour_on=False, busy_driver_on=False),
+    "D — Detour index"        : dict(quadrant_centroids=None,       surge_on=False, detour_on=True,  busy_driver_on=False),
+    "E — Dynamic assignment"  : dict(quadrant_centroids=None,       surge_on=False, detour_on=False, busy_driver_on=True,  busy_driver_max_minutes=7.0),
+    "F — B+C+E combined"      : dict(quadrant_centroids=quad_cents, surge_on=True,  detour_on=False, busy_driver_on=True,  busy_driver_max_minutes=7.0),
+}
+
+all_results = {}
+for scenario_name, kwargs in calibrated_scenarios.items():
+    all_results[scenario_name] = run_scenario_batch(
+        scenario_name, sim_kwargs=kwargs, pool_params=bvn_params
+    )
+
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 11 — RESULTS SUMMARY TABLE
+# SECTION 11 — RESULTS SUMMARY TABLES
 # ══════════════════════════════════════════════════════════════════════════════
 
-print("\n\n" + "═"*95)
-print(f"  SCENARIO COMPARISON  ({N_REPS} replications each, mean [95% CI])")
-print("═"*95)
-print(f"  {'Scenario':<22}  {'Abandon %':>10}  {'Wait (min)':>12}  "
-      f"{'£/hr':>10}  {'Util %':>8}  {'Surge rev £':>12}  {'Surge %':>8}")
-print("─"*95)
+HDR = ("  {:<28}  {:>10}  {:>12}  {:>10}  {:>8}  {:>12}  {:>8}".format(
+       "Scenario", "Abandon %", "Wait (min)", "\xa3/hr", "Util %", "Surge rev \xa3", "Surge %"))
+SEP = "═" * 103
+DIV = "─" * 103
+
 
 for name, res in all_results.items():
     ab  = res["abandonment"]
@@ -1490,12 +1676,30 @@ for name, res in all_results.items():
     sp  = res["surge_pct"]
     print(f"  {name:<22}  "
           f"{ab[0]*100:>5.4f} [{ab[1]*100:.4f},{ab[2]*100:.4f}]  "
+
+def print_row(name, res):
+    ab = res["abandonment"]; wt = res["wait"]; er = res["earnings"]
+    ut = res["utilisation"]; sr = res["surge_rev"]; sp = res["surge_pct"]
+    print(f"  {name:<28}  "
+          f"{ab[0]*100:>5.1f} [{ab[1]*100:.1f},{ab[2]*100:.1f}]  "
           f"{wt[0]:>6.2f} [{wt[1]:.2f},{wt[2]:.2f}]  "
           f"{er[0]:>6.2f} [{er[1]:.2f},{er[2]:.2f}]  "
           f"{ut[0]*100:>6.1f}  "
           f"{sr[0]:>8.0f} [{sr[1]:.0f},{sr[2]:.0f}]  "
           f"{sp[0]*100:>6.1f}%")
 
-print("═"*95)
-print("  Surge revenue = extra fare collected above baseline during surge periods.")
-print("  Surge % = fraction of completed rides that were priced at surge rate.")
+print("\n\n" + SEP)
+print(f"  GROUP 0 — BRIEF BASELINE  ({N_REPS} replications, mean [95% CI])")
+print(SEP); print(HDR); print(DIV)
+for name, res in brief_results.items():
+    print_row(name, res)
+
+print("\n" + SEP)
+print(f"  GROUP 1 — DATA-CALIBRATED SCENARIOS  ({N_REPS} replications, mean [95% CI])")
+print(SEP); print(HDR); print(DIV)
+for name, res in all_results.items():
+    print_row(name, res)
+
+print(SEP)
+print("  Surge revenue = extra fare above baseline collected during surge periods.")
+print("  Surge % = fraction of completed rides priced at surge rate.")
